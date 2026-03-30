@@ -1,0 +1,48 @@
+{
+  "maliciousDomains": [
+    "wallet-connect-verify.io",
+    "bank-secure-login.bit.ly",
+    "malware-test.darkscan.ai",
+    "dread_forum_onion_link",
+    "testsafebrowsing.appspot.com"
+  ],
+  "suspiciousTlds": [
+    "zip",
+    "mov",
+    "country",
+    "click",
+    "gq",
+    "tk",
+    "work",
+    "support"
+  ],
+  "brandTargets": [
+    "google",
+    "microsoft",
+    "apple",
+    "amazon",
+    "paypal",
+    "bank",
+    "wallet",
+    "telegram",
+    "github"
+  ],
+  "suspiciousHostKeywords": [
+    "secure-login",
+    "verify",
+    "account-update",
+    "signin-auth",
+    "gift",
+    "free-crypto",
+    "wallet-connect",
+    "auth-reset",
+    "support-team"
+  ],
+  "trustedDomains": [
+    "google.com",
+    "github.com",
+    "mozilla.org",
+    "wikipedia.org",
+    "youtube.com"
+  ]
+}
