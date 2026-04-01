@@ -7,8 +7,7 @@ import {
   Trash2, 
   Play, 
   Pause,
-  AlertCircle,
-  CheckCircle2,
+  Mail,
   Loader2,
   ShieldCheck,
   MoreHorizontal
@@ -25,6 +24,7 @@ export default function Monitoring() {
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [deleteTaskId, setDeleteTaskId] = useState<number | null>(null);
+  const [shareTaskId, setShareTaskId] = useState<number | null>(null);
   const [newKeyword, setNewKeyword] = useState('');
   const [alertEmail, setAlertEmail] = useState('');
   const [newInterval, setNewInterval] = useState('24');
@@ -85,14 +85,18 @@ export default function Monitoring() {
           interval_hours: parseInt(newInterval) 
         })
       });
+      const data = await res.json();
       if (res.ok) {
-        toast.success('Monitoring task created');
+        toast.success(
+          data.initial_email_sent
+            ? `Monitoring started. Initial report emailed to ${alertEmail}.`
+            : 'Monitoring started. Initial scan completed, but email was not confirmed as sent.'
+        );
         setShowModal(false);
         setNewKeyword('');
         setAlertEmail(user?.alert_email || user?.email || '');
         fetchTasks();
       } else {
-        const data = await res.json();
         toast.error(data.error || 'Failed to create task');
       }
     } catch (err) {
@@ -142,6 +146,32 @@ export default function Monitoring() {
     }
   };
 
+  const handleShareReport = async (taskId: number) => {
+    if (shareTaskId === taskId) return;
+
+    setShareTaskId(taskId);
+    try {
+      const res = await fetch(`/api/tasks/${taskId}/share-report`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      const data = await res.json();
+
+      if (res.ok) {
+        toast.success(data.message || 'Monitoring report shared by email.');
+      } else {
+        toast.error(data.error || 'Failed to share the monitoring report.');
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error('An error occurred while sharing the report.');
+    } finally {
+      setShareTaskId(null);
+    }
+  };
+
   return (
     <div className="p-8 space-y-8">
       <div className="flex justify-between items-center">
@@ -156,6 +186,13 @@ export default function Monitoring() {
           <Plus className="w-5 h-5" />
           New Monitor
         </button>
+      </div>
+
+      <div className="rounded-2xl border border-border bg-card/70 px-5 py-4">
+        <p className="text-sm text-muted-foreground leading-relaxed">
+          Scheduled monitoring emails are sent by the server at the selected <span className="font-semibold text-foreground">8 / 12 / 24 hour</span> interval even if the user or admin is logged out.
+          Keep the app server running for the schedule to continue.
+        </p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -185,6 +222,14 @@ export default function Monitoring() {
                     <MoreHorizontal className="w-4 h-4" />
                   </button>
                 }>
+                  <DropdownItem onClick={() => handleShareReport(task.id)} className="flex items-center gap-2">
+                    {shareTaskId === task.id ? (
+                      <><Loader2 className="w-4 h-4 animate-spin" /> Sending Report</>
+                    ) : (
+                      <><Mail className="w-4 h-4" /> Share Latest Report Now</>
+                    )}
+                  </DropdownItem>
+                  <div className="h-px bg-border my-1" />
                   <DropdownItem onClick={() => handleToggleStatus(task.id, task.status)} className="flex items-center gap-2">
                     {task.status === 'active' ? (
                       <><Pause className="w-4 h-4" /> Pause Monitor</>
@@ -209,14 +254,19 @@ export default function Monitoring() {
               </p>
 
               <div className="flex items-center justify-between pt-4 border-t border-border">
-                <div className="flex items-center gap-2">
-                  <div className={cn(
-                    "w-2 h-2 rounded-full",
-                    task.status === 'active' ? "bg-green-500 animate-pulse" : "bg-yellow-500"
-                  )} />
-                  <span className="text-xs font-medium uppercase tracking-wider">
-                    {task.status}
-                  </span>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <div className={cn(
+                      "w-2 h-2 rounded-full",
+                      task.status === 'active' ? "bg-green-500 animate-pulse" : "bg-yellow-500"
+                    )} />
+                    <span className="text-xs font-medium uppercase tracking-wider">
+                      {task.status}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Next run: {task.next_run_at ? formatAppTimestamp(task.next_run_at, { dateStyle: 'short', timeStyle: 'medium' }) : 'Pending'}
+                  </p>
                 </div>
                 <span className="text-xs text-muted-foreground">
                   Last run: {task.last_run ? formatAppTimestamp(task.last_run, { dateStyle: 'short', timeStyle: 'medium' }) : 'Never'}

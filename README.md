@@ -94,6 +94,9 @@ DarkScan AI currently includes:
 - timestamp normalization for accurate UI display
 - immediate scan when a monitor is created
 - periodic active monitoring
+- scheduled monitoring email delivery at 8, 12, or 24 hour intervals
+- manual "Share Latest Report Now" action from each monitor card
+- scheduled report delivery even when the user or admin is logged out
 - a hybrid threat scoring pipeline
 - a small locally trained text classifier
 - a small locally trained URL classifier
@@ -327,6 +330,32 @@ Render is a better fit than purely serverless platforms because the app uses a l
 
 The included configuration mounts a persistent disk and points the database path to that disk location. It also uses the production build command before starting the server.
 
+### Render commands
+
+Use these commands in Render:
+
+- Build command: `npm install && npm run build`
+- Start command: `npm run start`
+
+If you deploy using the included `render.yaml` as a Blueprint, Render will pick these up automatically.
+
+### Render deployment steps
+
+Use this practical deployment sequence:
+
+1. push the project to GitHub
+2. open Render
+3. choose `New` and then `Blueprint`
+4. connect the GitHub repository
+5. let Render detect `render.yaml`
+6. review the generated web service settings
+7. fill in the required environment variables in Render
+8. start the deploy
+9. wait for the build and startup logs to complete
+10. open the Render URL and verify the app
+
+If you prefer a manual service setup instead of using the Blueprint, create a Node web service, point it to the repository, enter the same build and start commands, and then configure the same environment variables and persistent disk.
+
 ### Render deployment checklist
 
 Before the first Render deploy, set these service environment variables:
@@ -341,6 +370,7 @@ Before the first Render deploy, set these service environment variables:
 - `SMTP_USER`
 - `SMTP_PASS`
 - `SMTP_FROM`
+- `DB_PATH`
 
 Recommended values:
 
@@ -349,9 +379,55 @@ Recommended values:
 - `ADMIN_EMAIL` should be the real admin mailbox that receives reports
 - `ADMIN_PASSWORD` should be a strong private password that you do not commit to GitHub
 - `JWT_SECRET` should be long and unique for production
+- `DB_PATH` should be `/opt/render/project/src/data/darkscan.db`
 - `SMTP_*` should match your real mail provider or Gmail App Password setup
 
 The `render.yaml` intentionally leaves the sensitive admin and SMTP values unsynced so they can be entered safely in Render instead of being committed into the repository.
+
+### Persistent disk requirement
+
+Because the app uses SQLite, it should keep its database on persistent storage. That matters because:
+
+- users are stored in the database
+- monitoring tasks are stored in the database
+- threat records are stored in the database
+- login and audit history are stored in the database
+- redeploys should not wipe the app state
+
+The included Render configuration already mounts a disk and points `DB_PATH` to that mounted location.
+
+### Scheduled monitoring after deployment
+
+Scheduled monitoring runs on the backend server, not in the browser. That means:
+
+- active monitors continue on schedule even if the user logs out
+- active monitors continue on schedule even if the admin logs out
+- scheduled email reports do not require the browser to stay open
+- the Render service itself must keep running for the schedule to continue
+
+Each monitor runs immediately when created and then continues on its selected `8`, `12`, or `24` hour interval.
+
+### Manual report sharing
+
+Each monitoring card also supports a manual `Share Latest Report Now` action. This sends the most recent saved report for that monitor to the configured alert email without waiting for the next scheduled run.
+
+### Post-deploy verification
+
+After deployment, verify the following:
+
+- the app opens successfully
+- captcha loads on the auth page
+- admin login works
+- threat records load correctly
+- monitoring tasks can be created
+- a newly created monitor performs its initial scan immediately
+- the monitor card shows both `Last run` and `Next run`
+- the configured email receives the initial monitoring report
+- the manual share action can send the latest saved report by email
+
+### Custom domain
+
+After the app is working on the default Render URL, you can add your own custom domain in the Render dashboard. Once the custom domain is active, update `APP_URL` in Render so the deployment settings stay aligned with the public URL.
 
 ## Updating The App On GitHub
 
@@ -480,6 +556,7 @@ The backend exposes routes for:
 - monitoring task creation
 - monitoring task deletion
 - monitoring task status toggle
+- monitoring report sharing by email
 - admin user listing
 - admin user deletion
 - admin role updates
@@ -517,6 +594,12 @@ That analysis is then stored as a new threat record and returned to the caller.
 ## How Monitoring Works
 
 When a user creates a monitor, the backend normalizes the target. If it looks like a hostname without protocol, the app automatically prefixes it with `https://`. The monitor record is created in the database, and then an initial scan is executed immediately. If that initial scan succeeds, a threat record is created and the monitor’s `last_run` timestamp is updated.
+
+If SMTP is configured correctly, that first run can also send the initial monitoring report email immediately. After that, the scheduler checks active monitors every minute and only runs a task again when the configured `8`, `12`, or `24` hour interval is actually due.
+
+This scheduling logic runs on the backend server rather than in the browser. Because of that, monitoring can continue while the user is logged out or while the admin is logged out. The important requirement is that the app server itself must still be running.
+
+Each monitor stores its own `alert_email`, and scheduled reports are sent to that saved recipient. The monitoring UI also includes a manual `Share Latest Report Now` action that sends the latest saved report for that monitor on demand without changing the schedule.
 
 Later, the scheduler checks due monitors and executes them again. The resulting detections appear like any other threat records and can be reviewed in the reports interface.
 

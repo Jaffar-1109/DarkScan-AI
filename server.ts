@@ -661,11 +661,11 @@ async function sendThreatEmail(recipients: string[], threat: any, links: string[
   const uniqueRecipients = [...new Set(recipients.filter(Boolean).map(value => sanitizeInput(value).toLowerCase()))];
   if (uniqueRecipients.length === 0) {
     console.log('[Email] Skipping send because no recipients were provided.');
-    return;
+    return false;
   }
   if (!mailTransport) {
     console.log('[Email] Skipping send because SMTP is not configured.');
-    return;
+    return false;
   }
 
   const lines = [
@@ -688,8 +688,10 @@ async function sendThreatEmail(recipients: string[], threat: any, links: string[
       text: lines.join('\n')
     });
     console.log(`[Email] Alert delivered to ${uniqueRecipients.join(', ')} for ${threat.platform}`);
+    return true;
   } catch (error) {
     console.error('[Email] Failed to send alert email:', error);
+    return false;
   }
 }
 
@@ -757,10 +759,39 @@ function formatThreatRecord(threat: any) {
 
 function formatMonitoringTask(task: any) {
   if (!task) return task;
+  const lastRunIso = toIsoTimestamp(task.last_run);
+  const nextRunIso = lastRunIso && Number.isFinite(Number(task.interval_hours))
+    ? new Date(new Date(lastRunIso).getTime() + Number(task.interval_hours) * 60 * 60 * 1000).toISOString()
+    : null;
+
   return {
     ...task,
-    last_run: toIsoTimestamp(task.last_run)
+    last_run: lastRunIso,
+    next_run_at: nextRunIso
   };
+}
+
+function parseThreatLinks(linksValue: string | null | undefined) {
+  if (!linksValue) return [] as string[];
+  try {
+    const parsed = JSON.parse(linksValue);
+    return Array.isArray(parsed) ? parsed.map((value) => String(value)) : [];
+  } catch {
+    return [];
+  }
+}
+
+function findLatestThreatForTask(task: any) {
+  const normalizedKeyword = normalizeTarget(task.keyword);
+  const threats = db.prepare(`
+    SELECT *
+    FROM threats
+    WHERE user_id = ?
+    ORDER BY detected_at DESC, id DESC
+    LIMIT 100
+  `).all(task.user_id) as any[];
+
+  return threats.find((threat) => normalizeTarget(String(threat.platform || '')) === normalizedKeyword) || null;
 }
 
 // --- Scraper Logic ---
@@ -976,13 +1007,13 @@ async function startServer() {
 
     db.prepare('UPDATE monitoring_tasks SET last_run = CURRENT_TIMESTAMP WHERE id = ?').run(task.id);
     emitThreat(task.user_id, threat);
-    await sendThreatEmail(
+    const emailSent = await sendThreatEmail(
       [task.alert_email],
       threat,
       links
     );
 
-    return threat;
+    return { threat, emailSent };
   };
 
   // --- API Routes ---
@@ -1204,14 +1235,22 @@ async function startServer() {
     const task = db.prepare('SELECT * FROM monitoring_tasks WHERE id = ?').get(result.lastInsertRowid) as any;
 
     let latestThreat = null;
+    let initialEmailSent = false;
     try {
-      latestThreat = await runMonitoringTask(task);
+      const initialRun = await runMonitoringTask(task);
+      latestThreat = initialRun.threat;
+      initialEmailSent = initialRun.emailSent;
     } catch (error) {
       console.error(`Initial monitoring scan failed for ${normalizedKeyword}:`, error);
     }
 
     const updatedTask = db.prepare('SELECT * FROM monitoring_tasks WHERE id = ?').get(result.lastInsertRowid);
-    res.status(201).json({ message: 'Task created', task: formatMonitoringTask(updatedTask), latestThreat });
+    res.status(201).json({
+      message: 'Task created',
+      task: formatMonitoringTask(updatedTask),
+      latestThreat,
+      initial_email_sent: initialEmailSent
+    });
   });
 
   app.delete('/api/tasks/:id', authenticateToken, (req: any, res) => {
@@ -1238,6 +1277,32 @@ async function startServer() {
     db.prepare('UPDATE monitoring_tasks SET status = ? WHERE id = ?').run(status, id);
     const updatedTask = db.prepare('SELECT * FROM monitoring_tasks WHERE id = ?').get(id);
     res.json({ message: 'Status updated', task: formatMonitoringTask(updatedTask) });
+  });
+
+  app.post('/api/tasks/:id/share-report', authenticateToken, async (req: any, res) => {
+    const { id } = req.params;
+    const task = db.prepare('SELECT * FROM monitoring_tasks WHERE id = ?').get(id) as any;
+
+    if (!task) return res.status(404).json({ error: 'Task not found' });
+    if (task.user_id !== req.user.id && req.user.role !== 'admin') return res.status(403).json({ error: 'Unauthorized' });
+
+    const latestThreat = findLatestThreatForTask(task);
+    if (!latestThreat) {
+      return res.status(404).json({ error: 'No monitoring report is available to share yet.' });
+    }
+
+    const formattedThreat = formatThreatRecord(latestThreat);
+    const emailSent = await sendThreatEmail([task.alert_email], formattedThreat, parseThreatLinks(latestThreat.links));
+
+    if (!emailSent) {
+      return res.status(500).json({ error: 'Failed to share the monitoring report by email.' });
+    }
+
+    res.json({
+      message: `Monitoring report shared to ${task.alert_email}.`,
+      recipient: task.alert_email,
+      report: formattedThreat
+    });
   });
 
   // Admin
@@ -1365,7 +1430,7 @@ async function startServer() {
       
       if (hoursSince >= task.interval_hours) {
         console.log(`Monitoring keyword: ${task.keyword}`);
-        const newThreat = await runMonitoringTask(task);
+        const { threat: newThreat } = await runMonitoringTask(task);
         
         
         if (newThreat.severity === 'HIGH') {
