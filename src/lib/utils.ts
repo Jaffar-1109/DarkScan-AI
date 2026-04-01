@@ -24,3 +24,7 @@ export function formatAppTimestamp(
     timeStyle: 'medium'
   });
 }
+
+export function isStrongPassword(password: string) {
+  return /[A-Z]/.test(password) && /\d/.test(password) && /[^A-Za-z0-9]/.test(password);
+}

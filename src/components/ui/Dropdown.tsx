@@ -45,7 +45,7 @@ export default function Dropdown({ trigger, children, align = 'right', className
             exit={{ opacity: 0, scale: 0.95, y: -10 }}
             transition={{ duration: 0.1 }}
             className={cn(
-              "absolute z-50 mt-2 w-48 rounded-xl bg-card border border-border shadow-xl py-2",
+              "absolute z-50 mt-2 w-48 max-h-[min(20rem,calc(100vh-2rem))] overflow-y-auto rounded-xl bg-card border border-border shadow-xl py-2",
               align === 'right' ? "right-0" : "left-0"
             )}
             onClick={(e) => {

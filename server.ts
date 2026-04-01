@@ -4,6 +4,7 @@ import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
+import dns from 'dns/promises';
 import cors from 'cors';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
@@ -15,6 +16,9 @@ import svgCaptcha from 'svg-captcha';
 import fs from 'fs';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
+import nodemailer from 'nodemailer';
 
 // --- Types & Interfaces ---
 const __filename = fileURLToPath(import.meta.url);
@@ -26,6 +30,19 @@ const PORT = Number(process.env.PORT || 3000);
 const JWT_SECRET = process.env.JWT_SECRET || 'darkscan_secret_key';
 const DB_PATH = process.env.DB_PATH || 'darkscan.db';
 const DATA_DIR = path.join(__dirname, 'data');
+const APP_URL = process.env.APP_URL || '';
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'jaffar.def1109@gmail.com';
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'Admin_DarkScan.AI';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'Jaffar_1109';
+const SMTP_HOST = process.env.SMTP_HOST || '';
+const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
+const SMTP_USER = process.env.SMTP_USER || '';
+const SMTP_PASS = process.env.SMTP_PASS || '';
+const SMTP_FROM = process.env.SMTP_FROM || ADMIN_EMAIL;
+const LOCKOUT_WINDOW_MINUTES = Number(process.env.LOCKOUT_WINDOW_MINUTES || 15);
+const MAX_FAILED_LOGIN_ATTEMPTS = Number(process.env.MAX_FAILED_LOGIN_ATTEMPTS || 5);
+const LOCKOUT_DURATION_MINUTES = Number(process.env.LOCKOUT_DURATION_MINUTES || 15);
+const ALLOWED_MONITOR_INTERVALS = new Set([8, 12, 24]);
 
 // --- Database Setup ---
 const db = new Database(DB_PATH);
@@ -34,9 +51,11 @@ const db = new Database(DB_PATH);
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT,
     email TEXT UNIQUE,
     password TEXT,
     role TEXT DEFAULT 'user',
+    alert_email TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -49,6 +68,7 @@ db.exec(`
     severity TEXT,
     prediction TEXT,
     links TEXT,
+    ip_address TEXT,
     is_false_positive INTEGER DEFAULT 0,
     detected_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(user_id) REFERENCES users(id)
@@ -58,6 +78,7 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER,
     keyword TEXT,
+    alert_email TEXT,
     interval_hours INTEGER,
     last_run DATETIME,
     status TEXT DEFAULT 'active',
@@ -71,23 +92,114 @@ db.exec(`
     status TEXT,
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+
+  CREATE TABLE IF NOT EXISTS admin_audit_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    admin_user_id INTEGER,
+    action TEXT,
+    target_user_id INTEGER,
+    details TEXT,
+    ip_address TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(admin_user_id) REFERENCES users(id)
+  );
 `);
 
-// Seed Admin if not exists
-const adminEmail = process.env.ADMIN_EMAIL || 'admin@darkscan.ai';
-console.log(`[System] Admin Email configured as: ${adminEmail}`);
+function ensureColumn(table: string, column: string, definition: string) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  const hasColumn = columns.some(col => col.name === column);
+  if (!hasColumn) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${definition}`);
+  }
+}
 
-const existingAdmin = db.prepare('SELECT * FROM users WHERE email = ?').get(adminEmail) as any;
-if (!existingAdmin) {
-  const hashedPassword = bcrypt.hashSync('admin123', 10);
-  db.prepare('INSERT INTO users (email, password, role) VALUES (?, ?, ?)').run(adminEmail, hashedPassword, 'admin');
-  console.log(`[System] Admin account seeded successfully: ${adminEmail}`);
+ensureColumn('users', 'username', 'username TEXT');
+ensureColumn('users', 'alert_email', 'alert_email TEXT');
+ensureColumn('threats', 'ip_address', 'ip_address TEXT');
+ensureColumn('monitoring_tasks', 'alert_email', 'alert_email TEXT');
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_unique ON users(username)');
+db.exec(`
+  UPDATE monitoring_tasks
+  SET interval_hours = 8
+  WHERE interval_hours IS NULL
+    OR interval_hours NOT IN (8, 12, 24);
+`);
+db.exec(`
+  UPDATE monitoring_tasks
+  SET alert_email = COALESCE((
+    SELECT COALESCE(NULLIF(TRIM(u.alert_email), ''), u.email)
+    FROM users u
+    WHERE u.id = monitoring_tasks.user_id
+  ), '${ADMIN_EMAIL}')
+  WHERE alert_email IS NULL
+    OR TRIM(alert_email) = ''
+    OR LOWER(alert_email) = 'alerts@example.com';
+`);
+db.exec(`
+  UPDATE threats
+  SET ip_address = COALESCE((
+    SELECT l.ip_address
+    FROM login_logs l
+    WHERE l.user_id = threats.user_id
+      AND l.status = 'success'
+      AND l.ip_address IS NOT NULL
+      AND TRIM(l.ip_address) != ''
+      AND LOWER(l.ip_address) NOT IN ('unknown', 'system')
+    ORDER BY l.timestamp DESC
+    LIMIT 1
+  ), '127.0.0.1')
+  WHERE ip_address IS NULL
+    OR TRIM(ip_address) = ''
+    OR LOWER(ip_address) IN ('unknown', 'system');
+`);
+
+const mailTransport = SMTP_HOST && SMTP_USER && SMTP_PASS
+  ? nodemailer.createTransport({
+      host: SMTP_HOST,
+      port: SMTP_PORT,
+      secure: SMTP_PORT === 465,
+      auth: {
+        user: SMTP_USER,
+        pass: SMTP_PASS
+      },
+      tls: {
+        rejectUnauthorized: !(SMTP_HOST === '127.0.0.1' || SMTP_HOST === 'localhost')
+      }
+    })
+  : null;
+
+// Seed Admin if not exists
+console.log(`[System] Admin account configured as: ${ADMIN_USERNAME} / ${ADMIN_EMAIL}`);
+
+const hashedAdminPassword = bcrypt.hashSync(ADMIN_PASSWORD, 10);
+const matchedAdmin =
+  db.prepare('SELECT * FROM users WHERE username = ?').get(ADMIN_USERNAME) as any ||
+  db.prepare('SELECT * FROM users WHERE email = ?').get(ADMIN_EMAIL) as any ||
+  db.prepare("SELECT * FROM users WHERE role = 'admin' ORDER BY id ASC LIMIT 1").get() as any;
+
+if (matchedAdmin) {
+  db.prepare(`
+    UPDATE users
+    SET username = ?, email = ?, password = ?, role = 'admin', alert_email = ?
+    WHERE id = ?
+  `).run(ADMIN_USERNAME, ADMIN_EMAIL, hashedAdminPassword, ADMIN_EMAIL, matchedAdmin.id);
+  console.log(`[System] Admin account updated successfully: ${ADMIN_EMAIL}`);
+} else {
+  db.prepare('INSERT INTO users (username, email, password, role, alert_email) VALUES (?, ?, ?, ?, ?)').run(
+    ADMIN_USERNAME,
+    ADMIN_EMAIL,
+    hashedAdminPassword,
+    'admin',
+    ADMIN_EMAIL
+  );
+  console.log(`[System] Admin account seeded successfully: ${ADMIN_EMAIL}`);
 }
 
 // Seed initial threats if none exist
 const threatCount = db.prepare('SELECT COUNT(*) as count FROM threats').get() as any;
 if (threatCount.count === 0) {
-  const adminId = existingAdmin ? existingAdmin.id : 1;
+  const adminRecord = db.prepare('SELECT * FROM users WHERE email = ?').get(ADMIN_EMAIL) as any;
+  const adminId = adminRecord ? adminRecord.id : 1;
   const initialThreats = [
     {
       platform: 'http://malware-test.darkscan.ai',
@@ -124,12 +236,12 @@ if (threatCount.count === 0) {
   ];
 
   const insertThreat = db.prepare(`
-    INSERT INTO threats (user_id, platform, content, risk_score, severity, prediction, links)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO threats (user_id, platform, content, risk_score, severity, prediction, links, ip_address)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   initialThreats.forEach(t => {
-    insertThreat.run(adminId, t.platform, t.content, t.risk_score, t.severity, t.prediction, t.links);
+    insertThreat.run(adminId, t.platform, t.content, t.risk_score, t.severity, t.prediction, t.links, '127.0.0.1');
   });
   console.log('[System] Initial threat data seeded.');
 }
@@ -304,6 +416,283 @@ function scoreThreatIntel(text: string, links: string[]) {
   return score;
 }
 
+function validatePasswordStrength(password: string) {
+  return /[A-Z]/.test(password) && /\d/.test(password) && /[^A-Za-z0-9]/.test(password);
+}
+
+function isValidEmail(email: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+const emailDomainValidationCache = new Map<string, { valid: boolean; checkedAt: number }>();
+const EMAIL_DOMAIN_CACHE_TTL_MS = 1000 * 60 * 30;
+const COMMON_EMAIL_DOMAINS = new Set([
+  'gmail.com',
+  'googlemail.com',
+  'outlook.com',
+  'hotmail.com',
+  'live.com',
+  'msn.com',
+  'yahoo.com',
+  'ymail.com',
+  'rocketmail.com',
+  'icloud.com',
+  'me.com',
+  'mac.com',
+  'aol.com',
+  'proton.me',
+  'protonmail.com',
+  'zoho.com',
+  'gmx.com',
+  'mail.com'
+]);
+const BLOCKED_EMAIL_DOMAINS = new Set([
+  'example.com',
+  'example.org',
+  'example.net',
+  'test.com',
+  'invalid',
+  'localhost',
+  'local',
+  'mailinator.com',
+  'guerrillamail.com',
+  'tempmail.com',
+  '10minutemail.com'
+]);
+
+function getLevenshteinDistance(a: string, b: string) {
+  const rows = a.length + 1;
+  const cols = b.length + 1;
+  const dp = Array.from({ length: rows }, () => Array<number>(cols).fill(0));
+
+  for (let i = 0; i < rows; i += 1) dp[i][0] = i;
+  for (let j = 0; j < cols; j += 1) dp[0][j] = j;
+
+  for (let i = 1; i < rows; i += 1) {
+    for (let j = 1; j < cols; j += 1) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + cost
+      );
+    }
+  }
+
+  return dp[a.length][b.length];
+}
+
+function isSuspiciousTypoOfCommonEmailDomain(domain: string) {
+  const normalized = sanitizeInput(domain).toLowerCase();
+  if (COMMON_EMAIL_DOMAINS.has(normalized)) return false;
+
+  for (const trustedDomain of COMMON_EMAIL_DOMAINS) {
+    const distance = getLevenshteinDistance(normalized, trustedDomain);
+    if (distance <= 2) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function isClearlyBlockedEmailDomain(domain: string) {
+  const normalized = sanitizeInput(domain).toLowerCase();
+  return (
+    !normalized ||
+    BLOCKED_EMAIL_DOMAINS.has(normalized) ||
+    isSuspiciousTypoOfCommonEmailDomain(normalized) ||
+    normalized.endsWith('.invalid') ||
+    normalized.endsWith('.local') ||
+    normalized.endsWith('.test') ||
+    normalized.endsWith('.example')
+  );
+}
+
+async function hasResolvableMailDomain(domain: string) {
+  const normalizedDomain = sanitizeInput(domain).toLowerCase();
+  if (!normalizedDomain) return false;
+  if (COMMON_EMAIL_DOMAINS.has(normalizedDomain)) return true;
+  if (isClearlyBlockedEmailDomain(normalizedDomain)) return false;
+
+  const cached = emailDomainValidationCache.get(normalizedDomain);
+  if (cached && (Date.now() - cached.checkedAt) < EMAIL_DOMAIN_CACHE_TTL_MS) {
+    return cached.valid;
+  }
+
+  let valid = false;
+
+  try {
+    const mxRecords = await dns.resolveMx(normalizedDomain);
+    valid = Array.isArray(mxRecords) && mxRecords.length > 0;
+  } catch (mxError: any) {
+    try {
+      const [aRecords, aaaaRecords] = await Promise.allSettled([
+        dns.resolve4(normalizedDomain),
+        dns.resolve6(normalizedDomain)
+      ]);
+
+      valid =
+        (aRecords.status === 'fulfilled' && aRecords.value.length > 0) ||
+        (aaaaRecords.status === 'fulfilled' && aaaaRecords.value.length > 0);
+    } catch {
+      valid = false;
+    }
+
+  }
+
+  emailDomainValidationCache.set(normalizedDomain, {
+    valid,
+    checkedAt: Date.now()
+  });
+
+  return valid;
+}
+
+async function validateAuthenticEmail(email: string) {
+  if (!isValidEmail(email)) return false;
+  const [, domain = ''] = email.split('@');
+  return hasResolvableMailDomain(domain);
+}
+
+function sanitizeInput(value: string) {
+  return value.replace(/\0/g, '').trim();
+}
+
+function normalizeIpAddress(value: string | null | undefined) {
+  const raw = sanitizeInput(String(value || ''));
+  if (!raw) return '127.0.0.1';
+
+  const first = raw.split(',')[0].trim();
+  const withoutPort = first.startsWith('[')
+    ? first.replace(/^\[([^\]]+)\](?::\d+)?$/, '$1')
+    : first.replace(/:\d+$/, '');
+
+  let normalized = withoutPort.replace(/^::ffff:/i, '');
+  if (normalized === '::1' || normalized === '::') {
+    normalized = '127.0.0.1';
+  }
+
+  return normalized || '127.0.0.1';
+}
+
+function getBaseUsername(email: string) {
+  return sanitizeInput(email.split('@')[0]).replace(/[^A-Za-z0-9._-]/g, '.') || 'user';
+}
+
+function generateUniqueUsername(seed: string) {
+  const base = sanitizeInput(seed).replace(/[^A-Za-z0-9._-]/g, '.') || 'user';
+  let candidate = base;
+  let counter = 1;
+
+  while (db.prepare('SELECT id FROM users WHERE username = ?').get(candidate)) {
+    candidate = `${base}.${counter}`;
+    counter += 1;
+  }
+
+  return candidate;
+}
+
+function getClientIp(req: any) {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (typeof forwarded === 'string' && forwarded.length > 0) {
+    return normalizeIpAddress(forwarded);
+  }
+  return normalizeIpAddress(req.ip || req.socket?.remoteAddress);
+}
+
+function getLatestUserIp(userId: number) {
+  const row = db.prepare(`
+    SELECT ip_address
+    FROM login_logs
+    WHERE user_id = ? AND status = 'success'
+      AND ip_address IS NOT NULL
+      AND TRIM(ip_address) != ''
+      AND LOWER(ip_address) NOT IN ('unknown', 'system')
+    ORDER BY timestamp DESC
+    LIMIT 1
+  `).get(userId) as any;
+
+  return normalizeIpAddress(row?.ip_address);
+}
+
+function hasTooManyRecentFailedLogins(userId: number) {
+  const row = db.prepare(`
+    SELECT COUNT(*) as count
+    FROM login_logs
+    WHERE user_id = ?
+      AND status = 'failed'
+      AND timestamp >= datetime('now', ?)
+  `).get(userId, `-${LOCKOUT_WINDOW_MINUTES} minutes`) as any;
+
+  return Number(row?.count || 0) >= MAX_FAILED_LOGIN_ATTEMPTS;
+}
+
+function getLockoutMessage() {
+  return `Too many failed login attempts. Please wait ${LOCKOUT_DURATION_MINUTES} minutes before trying again.`;
+}
+
+function validateStatus(value: string) {
+  return value === 'active' || value === 'paused';
+}
+
+function validateRole(value: string) {
+  return value === 'admin' || value === 'user';
+}
+
+function validateMonitorInterval(value: number) {
+  return ALLOWED_MONITOR_INTERVALS.has(value);
+}
+
+function logAdminAction(adminUserId: number, action: string, targetUserId: number | null, details: Record<string, unknown>, ipAddress: string) {
+  db.prepare(`
+    INSERT INTO admin_audit_logs (admin_user_id, action, target_user_id, details, ip_address)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(
+    adminUserId,
+    action,
+    targetUserId,
+    JSON.stringify(details),
+    normalizeIpAddress(ipAddress)
+  );
+}
+
+async function sendThreatEmail(recipients: string[], threat: any, links: string[]) {
+  const uniqueRecipients = [...new Set(recipients.filter(Boolean).map(value => sanitizeInput(value).toLowerCase()))];
+  if (uniqueRecipients.length === 0) {
+    console.log('[Email] Skipping send because no recipients were provided.');
+    return;
+  }
+  if (!mailTransport) {
+    console.log('[Email] Skipping send because SMTP is not configured.');
+    return;
+  }
+
+  const lines = [
+    `DarkScan AI Alert`,
+    `Source: ${threat.platform}`,
+    `Risk Score: ${threat.risk_score}`,
+    `Severity: ${threat.severity}`,
+    `Prediction: ${threat.prediction}`,
+    `IP Address: ${threat.ip_address}`,
+    `Detected At: ${threat.detected_at}`,
+    `Content: ${threat.content}`,
+    `Links: ${links.join(', ') || 'None'}`
+  ];
+
+  try {
+    await mailTransport.sendMail({
+      from: SMTP_FROM,
+      to: uniqueRecipients.join(', '),
+      subject: `[DarkScan AI] ${threat.severity} alert for ${threat.platform}`,
+      text: lines.join('\n')
+    });
+    console.log(`[Email] Alert delivered to ${uniqueRecipients.join(', ')} for ${threat.platform}`);
+  } catch (error) {
+    console.error('[Email] Failed to send alert email:', error);
+  }
+}
+
 function analyzeThreat(text: string, links: string[]) {
   let score = 0;
   const lowerText = text.toLowerCase();
@@ -361,6 +750,7 @@ function formatThreatRecord(threat: any) {
   if (!threat) return threat;
   return {
     ...threat,
+    ip_address: normalizeIpAddress(threat.ip_address),
     detected_at: toIsoTimestamp(threat.detected_at)
   };
 }
@@ -411,13 +801,73 @@ async function startServer() {
   const httpServer = createServer(app);
   const io = new Server(httpServer, {
     cors: {
-      origin: "*",
-      methods: ["GET", "POST"]
+      origin: APP_URL ? [APP_URL] : true,
+      methods: ["GET", "POST"],
+      credentials: true
+    },
+    allowRequest: (req, callback) => {
+      const origin = req.headers.origin;
+      if (!APP_URL || !origin || origin === APP_URL || origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
+        callback(null, true);
+      } else {
+        callback('Origin not allowed', false);
+      }
     }
   });
 
-  app.use(express.json());
-  app.use(cors());
+  app.set('trust proxy', process.env.NODE_ENV === 'production' ? 1 : false);
+  app.disable('x-powered-by');
+  app.use(helmet({
+    contentSecurityPolicy: process.env.NODE_ENV === 'production' ? {
+      directives: {
+        defaultSrc: ["'self'"],
+        imgSrc: ["'self'", 'data:', 'https:'],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        scriptSrc: ["'self'"],
+        connectSrc: ["'self'", APP_URL || "'self'"],
+        fontSrc: ["'self'", 'data:'],
+        objectSrc: ["'none'"],
+        frameAncestors: ["'none'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'"]
+      }
+    } : false,
+    crossOriginEmbedderPolicy: false
+  }));
+  app.use(express.json({ limit: '1mb' }));
+  app.use(cors({
+    origin: APP_URL ? [APP_URL] : true,
+    credentials: true
+  }));
+
+  const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 25,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many authentication attempts. Please try again later.' }
+  });
+
+  const emailValidationLimiter = rateLimit({
+    windowMs: 5 * 60 * 1000,
+    max: 40,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { valid: false, error: 'Too many email validation checks. Please wait a moment and try again.' }
+  });
+
+  const apiLimiter = rateLimit({
+    windowMs: 5 * 60 * 1000,
+    max: 120,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many requests. Please slow down and try again.' }
+  });
+
+  app.use('/api', apiLimiter);
+  app.use('/api/auth/login', authLimiter);
+  app.use('/api/auth/register', authLimiter);
+  app.use('/api/auth/validate-email', emailValidationLimiter);
 
   // --- Auth Middleware ---
   const authenticateToken = (req: any, res: any, next: any) => {
@@ -425,7 +875,10 @@ async function startServer() {
     const token = authHeader && authHeader.split(' ')[1];
     if (!token) return res.sendStatus(401);
 
-    jwt.verify(token, JWT_SECRET, (err: any, user: any) => {
+    jwt.verify(token, JWT_SECRET, {
+      algorithms: ['HS256'],
+      issuer: 'darkscan-ai'
+    }, (err: any, user: any) => {
       if (err) return res.sendStatus(403);
       req.user = user;
       next();
@@ -438,12 +891,34 @@ async function startServer() {
   };
 
   // --- Socket.io ---
+  io.use((socket, next) => {
+    const token = socket.handshake.auth?.token;
+    if (!token || typeof token !== 'string') {
+      return next(new Error('Unauthorized'));
+    }
+
+    jwt.verify(token, JWT_SECRET, {
+      algorithms: ['HS256'],
+      issuer: 'darkscan-ai'
+    }, (err: any, user: any) => {
+      if (err) return next(new Error('Unauthorized'));
+      (socket.data as any).user = user;
+      next();
+    });
+  });
+
   io.on('connection', (socket) => {
     console.log('[Socket] Client connected:', socket.id);
     
     socket.on('subscribe', (userId) => {
-      socket.join(`user:${userId}`);
-      console.log(`[Socket] Client ${socket.id} subscribed to user:${userId}`);
+      const sessionUser = (socket.data as any).user;
+      if (String(userId) === String(sessionUser?.id)) {
+        socket.join(`user:${sessionUser.id}`);
+        console.log(`[Socket] Client ${socket.id} subscribed to user:${sessionUser.id}`);
+      } else if (String(userId) === 'admin' && sessionUser?.role === 'admin') {
+        socket.join('user:admin');
+        console.log(`[Socket] Client ${socket.id} subscribed to user:admin`);
+      }
     });
 
     socket.on('disconnect', () => {
@@ -456,11 +931,12 @@ async function startServer() {
     platform: string,
     content: string,
     analysis: { prediction: string; risk_score: number; severity: string; },
-    links: string[]
+    links: string[],
+    ipAddress: string
   ) => {
     const result = db.prepare(`
-      INSERT INTO threats (user_id, platform, content, risk_score, severity, prediction, links)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO threats (user_id, platform, content, risk_score, severity, prediction, links, ip_address)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       userId,
       platform,
@@ -468,7 +944,8 @@ async function startServer() {
       analysis.risk_score,
       analysis.severity,
       analysis.prediction,
-      JSON.stringify(links)
+      JSON.stringify(links),
+      ipAddress
     );
 
     const threat = db.prepare('SELECT * FROM threats WHERE id = ?').get(result.lastInsertRowid);
@@ -485,6 +962,7 @@ async function startServer() {
     let content = task.keyword;
     let links: string[] = [];
     const scraped = await scrapeUrl(target);
+    const ipAddress = getLatestUserIp(task.user_id);
 
     if (scraped) {
       content = scraped.text || task.keyword;
@@ -494,10 +972,15 @@ async function startServer() {
     }
 
     const analysis = analyzeThreat(content, links);
-    const threat = createThreatRecord(task.user_id, target, content, analysis, links);
+    const threat = createThreatRecord(task.user_id, target, content, analysis, links, ipAddress);
 
     db.prepare('UPDATE monitoring_tasks SET last_run = CURRENT_TIMESTAMP WHERE id = ?').run(task.id);
     emitThreat(task.user_id, threat);
+    await sendThreatEmail(
+      [task.alert_email],
+      threat,
+      links
+    );
 
     return threat;
   };
@@ -515,26 +998,101 @@ async function startServer() {
     res.json({ data: captcha.data, text: captcha.text });
   });
 
-  app.post('/api/auth/register', (req, res) => {
-    const { email, password } = req.body;
+  app.post('/api/auth/validate-email', async (req, res) => {
+    const email = sanitizeInput(req.body.email || '');
+
+    if (!email) {
+      return res.status(400).json({ valid: false, error: 'Email is required.' });
+    }
+
+    if (!isValidEmail(email)) {
+      return res.json({ valid: false, error: 'Invalid email format.' });
+    }
+
+    const valid = await validateAuthenticEmail(email);
+    if (!valid) {
+      return res.json({
+        valid: false,
+        error: 'This email domain could not be verified. Please use a real email address.'
+      });
+    }
+
+    return res.json({ valid: true });
+  });
+
+  app.post('/api/auth/register', async (req, res) => {
+    const email = sanitizeInput(req.body.email || '');
+    const password = String(req.body.password || '');
+    const requestedUsername = sanitizeInput(req.body.username || '');
+    const alertEmail = sanitizeInput(req.body.alert_email || email);
+
+    if (!isValidEmail(email) || !isValidEmail(alertEmail)) {
+      return res.status(400).json({ error: 'Please enter a valid email address format.' });
+    }
+
+    const [isPrimaryEmailAuthentic, isAlertEmailAuthentic] = await Promise.all([
+      validateAuthenticEmail(email),
+      email === alertEmail ? Promise.resolve(true) : validateAuthenticEmail(alertEmail)
+    ]);
+
+    if (!isPrimaryEmailAuthentic || !isAlertEmailAuthentic) {
+      return res.status(400).json({ error: 'The email address could not be verified. Please use a real email domain that can receive mail.' });
+    }
+
+    if (!validatePasswordStrength(password)) {
+      return res.status(400).json({ error: 'Password must contain one uppercase letter, one number, and one special character.' });
+    }
+
     try {
+      const username = requestedUsername
+        ? generateUniqueUsername(requestedUsername)
+        : generateUniqueUsername(getBaseUsername(email));
       const hashedPassword = bcrypt.hashSync(password, 10);
-      db.prepare('INSERT INTO users (email, password) VALUES (?, ?)').run(email, hashedPassword);
-      res.status(201).json({ message: 'User registered' });
+      db.prepare('INSERT INTO users (username, email, password, alert_email) VALUES (?, ?, ?, ?)').run(
+        username,
+        email,
+        hashedPassword,
+        alertEmail
+      );
+      res.status(201).json({ message: 'User registered', username });
     } catch (err) {
-      res.status(400).json({ error: 'Email already exists' });
+      res.status(400).json({ error: 'Email or user id already exists' });
     }
   });
 
   app.post('/api/auth/login', (req, res) => {
-    const { email, password } = req.body;
-    const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email) as any;
-    
+    const identifier = sanitizeInput(req.body.identifier || req.body.email || '');
+    const password = String(req.body.password || '');
+    const user = db.prepare('SELECT * FROM users WHERE email = ? OR username = ?').get(identifier, identifier) as any;
+
+    if (user && hasTooManyRecentFailedLogins(user.id)) {
+      return res.status(429).json({ error: getLockoutMessage() });
+    }
+
     if (user && bcrypt.compareSync(password, user.password)) {
-      const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: '24h' });
-      db.prepare('INSERT INTO login_logs (user_id, ip_address, status) VALUES (?, ?, ?)').run(user.id, req.ip, 'success');
-      res.json({ token, user: { id: user.id, email: user.email, role: user.role } });
+      const token = jwt.sign(
+        { id: user.id, email: user.email, role: user.role },
+        JWT_SECRET,
+        {
+          expiresIn: '24h',
+          issuer: 'darkscan-ai'
+        }
+      );
+      db.prepare('INSERT INTO login_logs (user_id, ip_address, status) VALUES (?, ?, ?)').run(user.id, getClientIp(req), 'success');
+      res.json({
+        token,
+        user: {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          alert_email: user.alert_email,
+          role: user.role
+        }
+      });
     } else {
+      if (user) {
+        db.prepare('INSERT INTO login_logs (user_id, ip_address, status) VALUES (?, ?, ?)').run(user.id, getClientIp(req), 'failed');
+      }
       res.status(401).json({ error: 'Invalid credentials' });
     }
   });
@@ -551,7 +1109,13 @@ async function startServer() {
     try {
       const { id } = req.params;
       const { is_false_positive } = req.body;
-      
+
+      const threat = db.prepare('SELECT * FROM threats WHERE id = ?').get(id) as any;
+      if (!threat) return res.status(404).json({ error: 'Threat not found' });
+      if (req.user.role !== 'admin' && threat.user_id !== req.user.id) {
+        return res.status(403).json({ error: 'Unauthorized' });
+      }
+
       db.prepare('UPDATE threats SET is_false_positive = ? WHERE id = ?').run(is_false_positive ? 1 : 0, id);
       
       res.json({ success: true });
@@ -575,10 +1139,15 @@ async function startServer() {
   });
 
   app.post('/api/analyze', authenticateToken, async (req: any, res) => {
-    const { text, url } = req.body;
+    const text = String(req.body.text || '').slice(0, 10000);
+    const url = sanitizeInput(req.body.url || '');
     let content = text || '';
     let links: string[] = [];
     const normalizedUrl = url ? normalizeTarget(url) : '';
+
+    if (!content && !normalizedUrl) {
+      return res.status(400).json({ error: 'Text or URL is required.' });
+    }
 
     if (normalizedUrl) {
       const scraped = await scrapeUrl(normalizedUrl);
@@ -595,11 +1164,11 @@ async function startServer() {
 
     const analysis = analyzeThreat(content, links);
     
-    const newThreat = createThreatRecord(req.user.id, normalizedUrl || 'Manual Input', content, analysis, links);
+    const newThreat = createThreatRecord(req.user.id, normalizedUrl || 'Manual Input', content, analysis, links, getClientIp(req));
     
     emitThreat(req.user.id, newThreat);
 
-    res.json({ id: newThreat.id, detected_at: newThreat.detected_at, ...analysis, links });
+    res.json({ id: newThreat.id, detected_at: newThreat.detected_at, ip_address: newThreat.ip_address, ...analysis, links });
   });
 
   // Monitoring
@@ -609,12 +1178,28 @@ async function startServer() {
   });
 
   app.post('/api/tasks', authenticateToken, async (req: any, res) => {
-    const { keyword, interval_hours } = req.body;
+    const keyword = sanitizeInput(req.body.keyword || '');
+    const intervalHours = Number(req.body.interval_hours);
+    const alertEmail = sanitizeInput(req.body.alert_email || '');
+
+    if (!keyword) {
+      return res.status(400).json({ error: 'Target is required.' });
+    }
+
+    if (!isValidEmail(alertEmail)) {
+      return res.status(400).json({ error: 'A valid alert email address is required.' });
+    }
+
+    if (!Number.isFinite(intervalHours) || !validateMonitorInterval(intervalHours)) {
+      return res.status(400).json({ error: 'Monitoring interval must be 8, 12, or 24 hours.' });
+    }
+
     const normalizedKeyword = normalizeTarget(keyword);
-    const result = db.prepare('INSERT INTO monitoring_tasks (user_id, keyword, interval_hours) VALUES (?, ?, ?)').run(
+    const result = db.prepare('INSERT INTO monitoring_tasks (user_id, keyword, alert_email, interval_hours) VALUES (?, ?, ?, ?)').run(
       req.user.id,
       normalizedKeyword,
-      interval_hours
+      alertEmail,
+      intervalHours
     );
     const task = db.prepare('SELECT * FROM monitoring_tasks WHERE id = ?').get(result.lastInsertRowid) as any;
 
@@ -641,11 +1226,15 @@ async function startServer() {
 
   app.patch('/api/tasks/:id/status', authenticateToken, (req: any, res) => {
     const { id } = req.params;
-    const { status } = req.body;
+    const status = sanitizeInput(req.body.status || '');
     const task = db.prepare('SELECT * FROM monitoring_tasks WHERE id = ?').get(id) as any;
     if (!task) return res.status(404).json({ error: 'Task not found' });
     if (task.user_id !== req.user.id && req.user.role !== 'admin') return res.status(403).json({ error: 'Unauthorized' });
-    
+
+    if (!validateStatus(status)) {
+      return res.status(400).json({ error: 'Invalid task status' });
+    }
+
     db.prepare('UPDATE monitoring_tasks SET status = ? WHERE id = ?').run(status, id);
     const updatedTask = db.prepare('SELECT * FROM monitoring_tasks WHERE id = ?').get(id);
     res.json({ message: 'Status updated', task: formatMonitoringTask(updatedTask) });
@@ -653,26 +1242,105 @@ async function startServer() {
 
   // Admin
   app.get('/api/admin/users', authenticateToken, isAdmin, (req, res) => {
-    const users = db.prepare('SELECT id, email, role, created_at FROM users').all();
+    const users = db.prepare('SELECT id, username, email, alert_email, role, created_at FROM users').all();
     res.json(users);
+  });
+
+  app.get('/api/admin/users/:id/activity', authenticateToken, isAdmin, (req: any, res) => {
+    const { id } = req.params;
+    const userId = Number(id);
+
+    if (!Number.isInteger(userId) || userId <= 0) {
+      return res.status(400).json({ error: 'Invalid user id' });
+    }
+
+    const user = db.prepare(`
+      SELECT id, username, email, alert_email, role, created_at
+      FROM users
+      WHERE id = ?
+    `).get(userId) as any;
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const scans = db.prepare(`
+      SELECT *
+      FROM threats
+      WHERE user_id = ?
+      ORDER BY detected_at DESC
+      LIMIT 50
+    `).all(userId).map(formatThreatRecord);
+
+    const monitoringTasks = db.prepare(`
+      SELECT *
+      FROM monitoring_tasks
+      WHERE user_id = ?
+      ORDER BY id DESC
+    `).all(userId).map(formatMonitoringTask);
+
+    const loginHistory = db.prepare(`
+      SELECT *
+      FROM login_logs
+      WHERE user_id = ?
+      ORDER BY timestamp DESC
+      LIMIT 50
+    `).all(userId) as any[];
+
+    const summary = {
+      totalScans: scans.length,
+      activeMonitors: monitoringTasks.filter((task: any) => task.status === 'active').length,
+      totalMonitors: monitoringTasks.length,
+      lastLoginAt: loginHistory.find((log: any) => log.status === 'success')?.timestamp || null
+    };
+
+    res.json({
+      user,
+      summary,
+      scans,
+      monitoringTasks,
+      loginHistory
+    });
   });
 
   app.delete('/api/admin/users/:id', authenticateToken, isAdmin, (req: any, res) => {
     const { id } = req.params;
     if (Number(id) === req.user.id) return res.status(400).json({ error: 'Cannot delete yourself' });
-    
+
+    const targetUser = db.prepare('SELECT id, email, username, role FROM users WHERE id = ?').get(id) as any;
+    if (!targetUser) return res.status(404).json({ error: 'User not found' });
+
     db.prepare('DELETE FROM users WHERE id = ?').run(id);
     db.prepare('DELETE FROM threats WHERE user_id = ?').run(id);
+    db.prepare('DELETE FROM monitoring_tasks WHERE user_id = ?').run(id);
     db.prepare('DELETE FROM login_logs WHERE user_id = ?').run(id);
+    logAdminAction(req.user.id, 'delete_user', Number(id), {
+      email: targetUser.email,
+      username: targetUser.username,
+      role: targetUser.role
+    }, getClientIp(req));
     res.json({ message: 'User deleted' });
   });
 
   app.patch('/api/admin/users/:id/role', authenticateToken, isAdmin, (req: any, res) => {
     const { id } = req.params;
-    const { role } = req.body;
+    const role = sanitizeInput(req.body.role || '');
     if (Number(id) === req.user.id) return res.status(400).json({ error: 'Cannot change your own role' });
-    
+
+    if (!validateRole(role)) {
+      return res.status(400).json({ error: 'Invalid role' });
+    }
+
+    const targetUser = db.prepare('SELECT id, email, username, role FROM users WHERE id = ?').get(id) as any;
+    if (!targetUser) return res.status(404).json({ error: 'User not found' });
+
     db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, id);
+    logAdminAction(req.user.id, 'change_role', Number(id), {
+      email: targetUser.email,
+      username: targetUser.username,
+      previousRole: targetUser.role,
+      newRole: role
+    }, getClientIp(req));
     res.json({ message: 'Role updated' });
   });
 
@@ -714,6 +1382,17 @@ async function startServer() {
       appType: 'spa',
     });
     app.use(vite.middlewares);
+    app.get('*', async (req, res, next) => {
+      try {
+        const indexPath = path.join(__dirname, 'index.html');
+        const template = fs.readFileSync(indexPath, 'utf8');
+        const html = await vite.transformIndexHtml(req.originalUrl, template);
+        res.status(200).set({ 'Content-Type': 'text/html' }).end(html);
+      } catch (error) {
+        vite.ssrFixStacktrace(error as Error);
+        next(error);
+      }
+    });
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));

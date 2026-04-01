@@ -43,7 +43,7 @@ export default function ThreatDetailModal({ isOpen, onClose, threat }: ThreatDet
                 </div>
                 <div>
                   <h2 className="text-xl font-bold">Threat Details</h2>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold break-all pr-4">
                     Report #{threat.id} • {threat.platform}
                   </p>
                 </div>
@@ -107,19 +107,26 @@ export default function ThreatDetailModal({ isOpen, onClose, threat }: ThreatDet
               </div>
 
               {/* Metadata */}
-              <div className="grid grid-cols-2 gap-8 pt-4 border-t border-border">
-                <div className="flex items-center gap-3">
-                  <Calendar className="w-5 h-5 text-muted-foreground" />
-                  <div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4 border-t border-border">
+                <div className="flex items-start gap-3 min-w-0">
+                  <Calendar className="w-5 h-5 text-muted-foreground shrink-0" />
+                  <div className="min-w-0">
                     <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Detected At</p>
                     <p className="text-sm font-medium">{formatAppTimestamp(threat.detected_at)}</p>
                   </div>
                 </div>
-                <div className="flex items-center gap-3">
-                  <Globe className="w-5 h-5 text-muted-foreground" />
-                  <div>
+                <div className="flex items-start gap-3 min-w-0">
+                  <Globe className="w-5 h-5 text-muted-foreground shrink-0" />
+                  <div className="min-w-0">
                     <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Platform</p>
-                    <p className="text-sm font-medium">{threat.platform}</p>
+                    <p className="text-sm font-medium break-all whitespace-normal">{threat.platform}</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3 min-w-0">
+                  <Globe className="w-5 h-5 text-muted-foreground shrink-0" />
+                  <div className="min-w-0">
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider">User IP</p>
+                    <p className="text-sm font-medium font-mono break-all">{threat.ip_address || 'unknown'}</p>
                   </div>
                 </div>
               </div>

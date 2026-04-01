@@ -12,11 +12,15 @@ export const useSocket = () => useContext(SocketContext);
 
 export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [socket, setSocket] = useState<Socket | null>(null);
-  const { user } = useAuth();
+  const { user, token } = useAuth();
 
   useEffect(() => {
-    if (user) {
-      const newSocket = io(window.location.origin);
+    if (user && token) {
+      const newSocket = io(window.location.origin, {
+        auth: {
+          token
+        }
+      });
       
       newSocket.on('connect', () => {
         console.log('[Socket] Connected to server');
@@ -34,7 +38,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     } else {
       setSocket(null);
     }
-  }, [user]);
+  }, [user, token]);
 
   return (
     <SocketContext.Provider value={{ socket }}>

@@ -118,12 +118,13 @@ export default function ThreatReports() {
   });
 
   const exportCSV = () => {
-    const headers = ['Platform', 'Risk Score', 'Severity', 'Prediction', 'Detected At'];
+    const headers = ['Platform', 'Risk Score', 'Severity', 'Prediction', 'IP Address', 'Detected At'];
     const rows = filteredThreats.map(t => [
       t.platform,
       t.risk_score,
       t.severity,
       t.prediction,
+      t.ip_address || 'unknown',
       formatAppTimestamp(t.detected_at)
     ]);
 
@@ -154,11 +155,12 @@ export default function ThreatReports() {
       t.risk_score,
       t.severity,
       t.prediction,
+      t.ip_address || 'unknown',
       formatAppTimestamp(t.detected_at)
     ]);
 
     autoTable(doc, {
-      head: [['Platform', 'Risk Score', 'Severity', 'Prediction', 'Detected At']],
+      head: [['Platform', 'Risk Score', 'Severity', 'Prediction', 'IP Address', 'Detected At']],
       body: tableData,
       startY: 30,
       theme: 'grid',
@@ -229,6 +231,7 @@ export default function ThreatReports() {
                 <th className="pb-4 font-medium">Analysis</th>
                 <th className="pb-4 font-medium">Risk</th>
                 <th className="pb-4 font-medium">Links Found</th>
+                <th className="pb-4 font-medium">User IP</th>
                 <th className="pb-4 font-medium">Timestamp</th>
                 <th className="pb-4 font-medium"></th>
               </tr>
@@ -237,12 +240,12 @@ export default function ThreatReports() {
               {loading ? (
                 Array(5).fill(0).map((_, i) => (
                   <tr key={i} className="animate-pulse">
-                    <td colSpan={6} className="py-8"><div className="h-4 bg-muted rounded w-full" /></td>
+                    <td colSpan={7} className="py-8"><div className="h-4 bg-muted rounded w-full" /></td>
                   </tr>
                 ))
               ) : filteredThreats.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="py-20 text-center text-muted-foreground">No reports matching your criteria.</td>
+                  <td colSpan={7} className="py-20 text-center text-muted-foreground">No reports matching your criteria.</td>
                 </tr>
               ) : (
                 filteredThreats.map((threat) => (
@@ -278,6 +281,9 @@ export default function ThreatReports() {
                         <ExternalLink className="w-3 h-3" />
                         {JSON.parse(threat.links).length} items
                       </div>
+                    </td>
+                    <td className="py-4 text-xs font-mono text-muted-foreground">
+                      {threat.ip_address || 'unknown'}
                     </td>
                     <td className="py-4 text-muted-foreground">
                       {formatAppTimestamp(threat.detected_at)}

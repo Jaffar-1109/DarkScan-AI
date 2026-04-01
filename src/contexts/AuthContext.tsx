@@ -2,7 +2,9 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 
 interface User {
   id: number;
+  username?: string;
   email: string;
+  alert_email?: string;
   role: 'user' | 'admin';
 }
 
@@ -22,11 +24,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const savedToken = localStorage.getItem('ds_token');
-    const savedUser = localStorage.getItem('ds_user');
-    if (savedToken && savedUser) {
-      setToken(savedToken);
-      setUser(JSON.parse(savedUser));
+    try {
+      const savedToken = localStorage.getItem('ds_token');
+      const savedUser = localStorage.getItem('ds_user');
+      if (savedToken && savedUser) {
+        const parsedUser = JSON.parse(savedUser) as User;
+        if (parsedUser?.email && parsedUser?.role) {
+          setToken(savedToken);
+          setUser(parsedUser);
+        } else {
+          localStorage.removeItem('ds_token');
+          localStorage.removeItem('ds_user');
+        }
+      }
+    } catch (error) {
+      console.error('[Auth] Failed to restore saved session:', error);
+      localStorage.removeItem('ds_token');
+      localStorage.removeItem('ds_user');
     }
     setLoading(false);
   }, []);

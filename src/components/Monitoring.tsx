@@ -26,8 +26,9 @@ export default function Monitoring() {
   const [showModal, setShowModal] = useState(false);
   const [deleteTaskId, setDeleteTaskId] = useState<number | null>(null);
   const [newKeyword, setNewKeyword] = useState('');
+  const [alertEmail, setAlertEmail] = useState('');
   const [newInterval, setNewInterval] = useState('24');
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const { socket } = useSocket();
 
   const fetchTasks = async () => {
@@ -48,6 +49,10 @@ export default function Monitoring() {
   useEffect(() => {
     fetchTasks();
   }, []);
+
+  useEffect(() => {
+    setAlertEmail(user?.alert_email || user?.email || '');
+  }, [user]);
 
   useEffect(() => {
     if (socket) {
@@ -76,6 +81,7 @@ export default function Monitoring() {
         },
         body: JSON.stringify({ 
           keyword: newKeyword, 
+          alert_email: alertEmail,
           interval_hours: parseInt(newInterval) 
         })
       });
@@ -83,9 +89,11 @@ export default function Monitoring() {
         toast.success('Monitoring task created');
         setShowModal(false);
         setNewKeyword('');
+        setAlertEmail(user?.alert_email || user?.email || '');
         fetchTasks();
       } else {
-        toast.error('Failed to create task');
+        const data = await res.json();
+        toast.error(data.error || 'Failed to create task');
       }
     } catch (err) {
       console.error(err);
@@ -196,6 +204,9 @@ export default function Monitoring() {
                 <Clock className="w-4 h-4" />
                 Every {task.interval_hours} hours
               </div>
+              <p className="text-xs text-muted-foreground mb-4">
+                Alerts to: {task.alert_email}
+              </p>
 
               <div className="flex items-center justify-between pt-4 border-t border-border">
                 <div className="flex items-center gap-2">
@@ -352,6 +363,20 @@ export default function Monitoring() {
                     <option value="12">Every 12 hours</option>
                     <option value="24">Every 24 hours</option>
                   </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Alert Email Address</label>
+                  <input
+                    type="email"
+                    required
+                    value={alertEmail}
+                    onChange={(e) => setAlertEmail(e.target.value)}
+                    className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:ring-2 focus:ring-primary outline-none transition-all"
+                    placeholder="alerts@example.com"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Monitoring alerts and reports will be shared only to this email based on the selected schedule.
+                  </p>
                 </div>
                 <div className="flex gap-3 pt-4">
                   <button

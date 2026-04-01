@@ -27,25 +27,26 @@ This README is intentionally long and detailed. It is meant to serve as a comple
 19. Local Startup
 20. Local Network And Mobile Access
 21. Deployment On Render
-22. Environment Variables
-23. API Overview
-24. Data Flow Walkthrough
-25. How Scanning Works
-26. How Monitoring Works
-27. How Model Training Works
-28. Limitations
-29. Security Notes
-30. Performance Notes
-31. Troubleshooting
-32. Maintenance Guide
-33. Extending The Dataset
-34. Extending The Model
-35. Improving Accuracy
-36. Testing Ideas
-37. Production Readiness Notes
-38. Suggested Roadmap
-39. FAQ
-40. Closing Notes
+22. Updating The App On GitHub
+23. Environment Variables
+24. API Overview
+25. Data Flow Walkthrough
+26. How Scanning Works
+27. How Monitoring Works
+28. How Model Training Works
+29. Limitations
+30. Security Notes
+31. Performance Notes
+32. Troubleshooting
+33. Maintenance Guide
+34. Extending The Dataset
+35. Extending The Model
+36. Improving Accuracy
+37. Testing Ideas
+38. Production Readiness Notes
+39. Suggested Roadmap
+40. FAQ
+41. Closing Notes
 
 ## Project Overview
 
@@ -326,17 +327,141 @@ Render is a better fit than purely serverless platforms because the app uses a l
 
 The included configuration mounts a persistent disk and points the database path to that disk location. It also uses the production build command before starting the server.
 
+### Render deployment checklist
+
+Before the first Render deploy, set these service environment variables:
+
+- `APP_URL`
+- `ADMIN_USERNAME`
+- `ADMIN_EMAIL`
+- `ADMIN_PASSWORD`
+- `JWT_SECRET`
+- `SMTP_HOST`
+- `SMTP_PORT`
+- `SMTP_USER`
+- `SMTP_PASS`
+- `SMTP_FROM`
+
+Recommended values:
+
+- `APP_URL` should be your final Render URL or custom domain
+- `ADMIN_USERNAME` can be `Admin_DarkScan.AI`
+- `ADMIN_EMAIL` should be the real admin mailbox that receives reports
+- `ADMIN_PASSWORD` should be a strong private password that you do not commit to GitHub
+- `JWT_SECRET` should be long and unique for production
+- `SMTP_*` should match your real mail provider or Gmail App Password setup
+
+The `render.yaml` intentionally leaves the sensitive admin and SMTP values unsynced so they can be entered safely in Render instead of being committed into the repository.
+
+## Updating The App On GitHub
+
+If you are using GitHub as the source for this project, the normal update flow is:
+
+1. make your code changes locally
+2. test the app locally
+3. commit the changes
+4. push the branch to GitHub
+5. let Render auto-deploy from that pushed commit if auto-deploy is enabled
+
+### Safe workflow
+
+Use this sequence from the project root:
+
+```powershell
+git status
+git add .
+git commit -m "Describe your change"
+git push origin main
+```
+
+If you are working on another branch, replace `main` with that branch name.
+
+### Recommended update routine
+
+Before pushing:
+
+- run `npm run lint`
+- start the app with `npm run dev`
+- check login, dashboard, and any feature you changed
+- if monitoring or email behavior changed, test one monitor before pushing
+
+### If Render is connected to GitHub
+
+If your Render service is linked to this repository and auto-deploy is enabled, pushing to the connected branch will automatically trigger a new deploy. That means:
+
+- GitHub updates when you `commit` and `push`
+- Render updates when it sees the new pushed commit
+- local unsaved changes do not affect GitHub or Render
+
+### Important caution
+
+Do not commit your real `.env` file if it contains secrets such as:
+
+- `SMTP_PASS`
+- `JWT_SECRET`
+- private production credentials
+
+Only commit `.env.example` as a template. Keep the real `.env` local or store the values in Render environment variables.
+
+### Useful commands
+
+See changed files:
+
+```powershell
+git status
+```
+
+See what changed before commit:
+
+```powershell
+git diff
+```
+
+Push the current branch:
+
+```powershell
+git push
+```
+
+### If you want safer updates
+
+A good practice is:
+
+1. create a new branch
+2. make and test changes there
+3. push the branch
+4. merge into `main` only after checking the result
+
+Example:
+
+```powershell
+git checkout -b feature/my-change
+git add .
+git commit -m "Add my change"
+git push origin feature/my-change
+```
+
+Then merge that branch into `main` from GitHub or locally when ready.
+
 ## Environment Variables
 
 The project supports these important environment variables:
 
 - `PORT`
+- `APP_URL`
 - `JWT_SECRET`
+- `ADMIN_USERNAME`
 - `ADMIN_EMAIL`
+- `ADMIN_PASSWORD`
 - `DB_PATH`
 - `NODE_ENV`
+- `SMTP_HOST`
+- `SMTP_PORT`
+- `SMTP_USER`
+- `SMTP_PASS`
+- `SMTP_FROM`
 
-`PORT` is used by the backend listener. `JWT_SECRET` secures issued tokens. `ADMIN_EMAIL` defines the seeded admin account email. `DB_PATH` controls where the SQLite file is stored. `NODE_ENV` switches behavior between development and production serving.
+`PORT` is used by the backend listener. `APP_URL` is used for environment-aware links and deployment configuration. `JWT_SECRET` secures issued tokens. `ADMIN_USERNAME`, `ADMIN_EMAIL`, and `ADMIN_PASSWORD` define the seeded admin account. `DB_PATH` controls where the SQLite file is stored. `NODE_ENV` switches behavior between development and production serving. The `SMTP_*` values enable real email delivery for monitoring alerts and reports.
 
 The `.env.example` file contains the local template. On Render, values can be managed through the service environment configuration.
 
