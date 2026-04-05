@@ -28,7 +28,7 @@ const natural = require('natural') as typeof import('natural');
 
 const PORT = Number(process.env.PORT || 3000);
 const JWT_SECRET = process.env.JWT_SECRET || 'darkscan_secret_key';
-const DB_PATH = process.env.DB_PATH || 'darkscan.db';
+const DB_PATH_SETTING = process.env.DB_PATH || 'darkscan.db';
 const DATA_DIR = path.join(__dirname, 'data');
 const APP_URL = process.env.APP_URL || '';
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'jaffar.def1109@gmail.com';
@@ -43,9 +43,14 @@ const LOCKOUT_WINDOW_MINUTES = Number(process.env.LOCKOUT_WINDOW_MINUTES || 15);
 const MAX_FAILED_LOGIN_ATTEMPTS = Number(process.env.MAX_FAILED_LOGIN_ATTEMPTS || 5);
 const LOCKOUT_DURATION_MINUTES = Number(process.env.LOCKOUT_DURATION_MINUTES || 15);
 const ALLOWED_MONITOR_INTERVALS = new Set([8, 12, 24]);
+const RESOLVED_DB_PATH = path.isAbsolute(DB_PATH_SETTING)
+  ? DB_PATH_SETTING
+  : path.join(__dirname, DB_PATH_SETTING);
 
 // --- Database Setup ---
-const db = new Database(DB_PATH);
+fs.mkdirSync(path.dirname(RESOLVED_DB_PATH), { recursive: true });
+const db = new Database(RESOLVED_DB_PATH);
+console.log(`[System] Using SQLite database at: ${RESOLVED_DB_PATH} - server.ts:51`);
 
 // Initialize tables
 db.exec(`

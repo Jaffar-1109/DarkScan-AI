@@ -39,6 +39,10 @@ export default function ThreatReports() {
   const { socket } = useSocket();
 
   const fetchThreats = async (options?: { silent?: boolean }) => {
+    if (!token) {
+      return;
+    }
+
     const silent = options?.silent ?? false;
 
     if (silent) {
@@ -68,6 +72,10 @@ export default function ThreatReports() {
   };
 
   useEffect(() => {
+    if (!token) {
+      return;
+    }
+
     fetchThreats();
     const intervalId = window.setInterval(() => {
       fetchThreats({ silent: true });

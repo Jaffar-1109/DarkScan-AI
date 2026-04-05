@@ -37,6 +37,10 @@ export default function AdminPanel() {
   const { token } = useAuth();
 
   const fetchData = async () => {
+    if (!token) {
+      return;
+    }
+
     try {
       const [usersRes, logsRes] = await Promise.all([
         fetch('/api/admin/users', { headers: { Authorization: `Bearer ${token}` } }),
@@ -59,6 +63,10 @@ export default function AdminPanel() {
   };
 
   useEffect(() => {
+    if (!token) {
+      return;
+    }
+
     fetchData();
   }, [token]);
 

@@ -64,6 +64,10 @@ export default function Dashboard({ setActiveTab }: DashboardProps) {
   const { socket } = useSocket();
 
   const fetchThreats = async () => {
+    if (!token) {
+      return;
+    }
+
     try {
       const res = await fetch('/api/threats', {
         headers: { 'Authorization': `Bearer ${token}` }
@@ -78,8 +82,12 @@ export default function Dashboard({ setActiveTab }: DashboardProps) {
   };
 
   useEffect(() => {
+    if (!token) {
+      return;
+    }
+
     fetchThreats();
-  }, []);
+  }, [token]);
 
   useEffect(() => {
     if (socket) {

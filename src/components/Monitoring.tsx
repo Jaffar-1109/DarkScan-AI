@@ -32,6 +32,10 @@ export default function Monitoring() {
   const { socket } = useSocket();
 
   const fetchTasks = async () => {
+    if (!token) {
+      return;
+    }
+
     try {
       const res = await fetch('/api/tasks', {
         headers: { 'Authorization': `Bearer ${token}` }
@@ -47,8 +51,12 @@ export default function Monitoring() {
   };
 
   useEffect(() => {
+    if (!token) {
+      return;
+    }
+
     fetchTasks();
-  }, []);
+  }, [token]);
 
   useEffect(() => {
     setAlertEmail(user?.alert_email || user?.email || '');
