@@ -1173,6 +1173,60 @@ async function startServer() {
     res.json({ user });
   });
 
+  app.post('/api/extension/scan-visit', authenticateToken, async (req: any, res) => {
+    const url = sanitizeInput(req.body.url || '');
+    const pageTitle = String(req.body.page_title || '').trim().slice(0, 200);
+    const emailReports = Boolean(req.body.email_reports);
+    const minimumSeverity = String(req.body.minimum_severity || 'HIGH').toUpperCase();
+
+    if (!url) {
+      return res.status(400).json({ error: 'Visited URL is required.' });
+    }
+
+    if (!/^https?:\/\//i.test(url)) {
+      return res.status(400).json({ error: 'Only http and https URLs can be scanned.' });
+    }
+
+    if (!validateSeverity(minimumSeverity)) {
+      return res.status(400).json({ error: 'Invalid severity threshold.' });
+    }
+
+    const normalizedUrl = normalizeTarget(url);
+    let content = pageTitle ? `Browser visit detected: ${pageTitle}` : 'Browser visit detected';
+    let links: string[] = [];
+
+    const scraped = await scrapeUrl(normalizedUrl);
+    if (scraped) {
+      content = `${content}\n${scraped.text}`.trim();
+      links = scraped.links;
+    } else {
+      links = [normalizedUrl];
+    }
+
+    const textLinks = content.match(/https?:\/\/[^\s]+/g) || [];
+    links = [...new Set([...links, ...textLinks, normalizedUrl])];
+
+    const analysis = analyzeThreat(content, links);
+    const newThreat = createThreatRecord(req.user.id, normalizedUrl, content, analysis, links, getClientIp(req));
+
+    emitThreat(req.user.id, newThreat);
+
+    let emailSent = false;
+    if (emailReports && severityMeetsThreshold(analysis.severity, minimumSeverity)) {
+      const currentUser = db.prepare('SELECT email, alert_email FROM users WHERE id = ?').get(req.user.id) as any;
+      const recipient = sanitizeInput(currentUser?.alert_email || currentUser?.email || '');
+      emailSent = await sendThreatEmail(recipient ? [recipient] : [], newThreat, links);
+    }
+
+    res.json({
+      message: 'Visited URL scanned successfully.',
+      threat: newThreat,
+      analysis,
+      email_sent: emailSent,
+      minimum_severity: minimumSeverity
+    });
+  });
+
   // Threats
   app.get('/api/threats', authenticateToken, (req: any, res) => {
     const threats = req.user.role === 'admin' 

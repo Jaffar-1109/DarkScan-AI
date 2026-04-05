@@ -27,13 +27,13 @@ const connectSteps = [
   'Set Backend URL to your DarkScan AI app address.',
   'Sign in with your DarkScan AI email/user ID and password.',
   'Enable Scan visited tabs automatically.',
-  'Choose the Browser Guard badge threshold and save your preferences.'
+  'Optionally enable email reports and choose the alert severity threshold.'
 ];
 
 const behaviors = [
   'Visited http and https tabs can be scanned only after the user explicitly enables the extension.',
   'Scan results are sent to the DarkScan AI backend and stored as threat records.',
-  'Browser Guard keeps visited-site scans inside DarkScan AI instead of directly emailing every browser visit.',
+  'Email reporting can be triggered automatically for suspicious visits based on the chosen threshold.',
   'The extension includes a Scan Current Tab action for manual checks on demand.'
 ];
 
@@ -245,10 +245,10 @@ export default function BrowserGuard() {
             <div className="rounded-xl bg-primary/10 p-3">
               <Mail className="h-5 w-5 text-primary" />
             </div>
-            <h3 className="font-bold">Workspace-Safe Reporting</h3>
+            <h3 className="font-bold">Email Alerts</h3>
           </div>
           <p className="text-sm text-muted-foreground">
-            Browser Guard visited-site scans stay inside the dashboard and Threat Reports instead of sending direct email for each browser visit.
+            The extension can ask the backend to email reports for suspicious visits using the saved alert email on the user account when the result meets the chosen severity threshold.
           </p>
         </motion.div>
 

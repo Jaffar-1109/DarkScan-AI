@@ -5,6 +5,7 @@ const DEFAULT_SETTINGS = {
   token: '',
   user: null,
   monitoringEnabled: false,
+  emailReports: false,
   minimumSeverity: 'HIGH',
   scanCooldownMinutes: 15,
   lastScanStatus: 'Idle',
@@ -28,6 +29,7 @@ const backendUrlInput = document.getElementById('backendUrl');
 const identifierInput = document.getElementById('identifier');
 const passwordInput = document.getElementById('password');
 const monitoringEnabledInput = document.getElementById('monitoringEnabled');
+const emailReportsInput = document.getElementById('emailReports');
 const minimumSeverityInput = document.getElementById('minimumSeverity');
 const scanCooldownMinutesInput = document.getElementById('scanCooldownMinutes');
 const connectButton = document.getElementById('connectButton');
@@ -65,6 +67,7 @@ async function loadSettings() {
 
   backendUrlInput.value = normalizeBackendUrl(settings.backendUrl);
   monitoringEnabledInput.checked = Boolean(settings.monitoringEnabled);
+  emailReportsInput.checked = Boolean(settings.emailReports);
   minimumSeverityInput.value = settings.minimumSeverity || 'HIGH';
   scanCooldownMinutesInput.value = String(settings.scanCooldownMinutes || 15);
 
@@ -139,6 +142,7 @@ saveButton.addEventListener('click', async () => {
   await storageSet({
     backendUrl: normalizeBackendUrl(backendUrlInput.value),
     monitoringEnabled: monitoringEnabledInput.checked,
+    emailReports: emailReportsInput.checked,
     minimumSeverity: minimumSeverityInput.value,
     scanCooldownMinutes: Math.max(1, Number(scanCooldownMinutesInput.value) || 15)
   });

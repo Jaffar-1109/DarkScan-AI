@@ -329,7 +329,7 @@ The extension can:
 - watch visited `http` and `https` tabs after the user enables monitoring
 - send visited URLs to the backend for analysis
 - store the resulting threat records in the app
-- keep visited-site scans inside the app instead of directly emailing every browser visit
+- optionally email suspicious-visit reports to the saved alert email on the user account
 - let the user manually scan the current tab on demand
 
 ### How to load the extension
@@ -350,13 +350,14 @@ Firefox support is partially prepared through WebExtension-compatible code and m
 3. enter your DarkScan AI email or user ID and password
 4. click `Connect`
 5. keep `Scan visited tabs automatically` enabled if you want auto-scanning
-6. choose the Browser Guard badge threshold and cooldown window
+6. optionally enable email reports for suspicious visits
+7. choose the minimum severity and cooldown window
 
 ### How extension scanning behaves
 
 The extension is designed to be explicit and user-controlled. It does not run until the user connects it and enables browser monitoring.
 
-Once enabled, it watches visited tabs and sends the current page URL to the backend. The backend performs analysis, stores the result as a threat record, and keeps the visited-site report inside DarkScan AI. A cooldown helps avoid repeatedly scanning the exact same page too often.
+Once enabled, it watches visited tabs and sends the current page URL to the backend. The backend performs analysis, stores the result as a threat record, and can optionally email a report when the result meets the selected severity threshold. A cooldown helps avoid repeatedly scanning the exact same page too often.
 
 ### Preparing Browser Guard for deployment
 

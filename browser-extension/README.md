@@ -7,7 +7,7 @@ This is a consent-based browser extension that scans visited URLs with your Dark
 - lets the user connect the extension to a DarkScan AI server
 - scans visited `http` and `https` tabs after the user turns monitoring on
 - sends visited URLs to the backend for analysis
-- stores visited-site scan results inside DarkScan AI without directly emailing each browser visit
+- can email suspicious visit reports using the saved alert email on the account
 - can manually trigger a scan for the current tab
 
 ## How to load it in Chrome, Edge, or Opera
@@ -24,7 +24,8 @@ This is a consent-based browser extension that scans visited URLs with your Dark
 3. enter your DarkScan AI email/user ID and password
 4. click `Connect`
 5. leave `Scan visited tabs automatically` enabled
-6. choose the Browser Guard badge threshold and cooldown
+6. optionally enable `Email reports for suspicious visits`
+7. choose the minimum severity and cooldown
 
 ## Prepare it for deployment
 

@@ -5,6 +5,7 @@ const DEFAULT_SETTINGS = {
   token: '',
   user: null,
   monitoringEnabled: false,
+  emailReports: false,
   minimumSeverity: 'HIGH',
   scanCooldownMinutes: 15,
   lastScanStatus: 'Idle',
@@ -123,6 +124,7 @@ async function analyzeVisitedTab(tab, { force = false } = {}) {
       body: JSON.stringify({
         url: tab.url,
         page_title: tab.title || '',
+        email_reports: settings.emailReports,
         minimum_severity: settings.minimumSeverity
       })
     });
