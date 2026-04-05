@@ -13,7 +13,9 @@ import {
   Eye,
   Share2,
   Trash2,
-  Flag
+  Flag,
+  MonitorSmartphone,
+  RefreshCw
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useSocket } from '../contexts/SocketContext';
@@ -28,6 +30,7 @@ import ThreatDetailModal from './ui/ThreatDetailModal';
 export default function ThreatReports() {
   const [threats, setThreats] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [deleteId, setDeleteId] = useState<number | null>(null);
@@ -35,7 +38,15 @@ export default function ThreatReports() {
   const { token } = useAuth();
   const { socket } = useSocket();
 
-  const fetchThreats = async () => {
+  const fetchThreats = async (options?: { silent?: boolean }) => {
+    const silent = options?.silent ?? false;
+
+    if (silent) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
+
     try {
       const res = await fetch('/api/threats', {
         headers: { 'Authorization': `Bearer ${token}` }
@@ -44,20 +55,33 @@ export default function ThreatReports() {
       setThreats(data);
     } catch (err) {
       console.error(err);
-      toast.error('Failed to fetch threat reports');
+      if (!silent) {
+        toast.error('Failed to fetch threat reports');
+      }
     } finally {
-      setLoading(false);
+      if (silent) {
+        setRefreshing(false);
+      } else {
+        setLoading(false);
+      }
     }
   };
 
   useEffect(() => {
     fetchThreats();
-  }, []);
+    const intervalId = window.setInterval(() => {
+      fetchThreats({ silent: true });
+    }, 15000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [token]);
 
   useEffect(() => {
     if (socket) {
-      socket.on('new_threat', (threat: any) => {
-        setThreats(prev => [threat, ...prev]);
+      socket.on('new_threat', () => {
+        fetchThreats({ silent: true });
       });
 
       return () => {
@@ -113,7 +137,11 @@ export default function ThreatReports() {
   const filteredThreats = threats.filter(t => {
     const matchesSearch = t.platform.toLowerCase().includes(search.toLowerCase()) || 
                          t.content.toLowerCase().includes(search.toLowerCase());
-    const matchesFilter = filter === 'all' || t.severity === filter;
+    const isBrowserGuardScan = String(t.content || '').startsWith('Browser visit detected:');
+    const matchesFilter =
+      filter === 'all' ||
+      t.severity === filter ||
+      (filter === 'browser' && isBrowserGuardScan);
     return matchesSearch && matchesFilter;
   });
 
@@ -195,6 +223,22 @@ export default function ThreatReports() {
         </div>
       </div>
 
+      <div className="rounded-2xl border border-border bg-card/70 px-5 py-4">
+        <div className="flex items-start gap-3">
+          <div className="rounded-xl bg-primary/10 p-2">
+            <MonitorSmartphone className="h-4 w-4 text-primary" />
+          </div>
+          <div>
+            <p className="text-sm text-foreground">
+              Browser Guard scans also appear here as normal threat records.
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              If you used the extension, visited-site scans should appear automatically here. The page also refreshes itself every 15 seconds while it is open.
+            </p>
+          </div>
+        </div>
+      </div>
+
       <div className="p-6 bg-card border border-border rounded-2xl shadow-sm space-y-6">
         <div className="flex flex-col md:flex-row gap-4 justify-between">
           <div className="relative flex-1 max-w-md">
@@ -208,7 +252,7 @@ export default function ThreatReports() {
             />
           </div>
           <div className="flex gap-2">
-            {['all', 'HIGH', 'MEDIUM', 'LOW'].map((f) => (
+            {['all', 'browser', 'HIGH', 'MEDIUM', 'LOW'].map((f) => (
               <button
                 key={f}
                 onClick={() => setFilter(f)}
@@ -217,9 +261,17 @@ export default function ThreatReports() {
                   filter === f ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:text-foreground"
                 )}
               >
-                {f.charAt(0) + f.slice(1).toLowerCase()}
+                {f === 'browser' ? 'Browser Guard' : f.charAt(0) + f.slice(1).toLowerCase()}
               </button>
             ))}
+            <button
+              onClick={() => fetchThreats({ silent: true })}
+              disabled={refreshing}
+              className="px-4 py-2 rounded-xl text-sm font-medium border border-border hover:bg-muted transition-all disabled:opacity-60 inline-flex items-center gap-2"
+            >
+              <RefreshCw className={cn("w-4 h-4", refreshing && "animate-spin")} />
+              {refreshing ? 'Refreshing' : 'Refresh'}
+            </button>
           </div>
         </div>
 
@@ -258,7 +310,12 @@ export default function ThreatReports() {
                         )}>
                           <ShieldAlert className="w-4 h-4" />
                         </div>
-                        <span className="font-medium">{threat.platform}</span>
+                        <div className="min-w-0">
+                          <p className="font-medium break-all">{threat.platform}</p>
+                          {String(threat.content || '').startsWith('Browser visit detected:') && (
+                            <p className="mt-1 text-[11px] uppercase tracking-wider text-primary">Browser Guard Scan</p>
+                          )}
+                        </div>
                       </div>
                     </td>
                     <td className="py-4 max-w-xs">

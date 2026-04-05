@@ -5,6 +5,7 @@ import { SocketProvider } from './contexts/SocketContext';
 import LoginPage from './pages/LoginPage';
 import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
+import BrowserGuard from './components/BrowserGuard';
 import Monitoring from './components/Monitoring';
 import ThreatReports from './components/ThreatReports';
 import AdminPanel from './components/AdminPanel';
@@ -34,6 +35,7 @@ function AppContent() {
   const renderContent = () => {
     switch (activeTab) {
       case 'dashboard': return <Dashboard setActiveTab={setActiveTab} />;
+      case 'browser-guard': return <BrowserGuard />;
       case 'monitoring': return <Monitoring />;
       case 'threats': return <ThreatReports />;
       case 'admin': return <AdminPanel />;

@@ -26,27 +26,28 @@ This README is intentionally long and detailed. It is meant to serve as a comple
 18. Installation
 19. Local Startup
 20. Local Network And Mobile Access
-21. Deployment On Render
-22. Updating The App On GitHub
-23. Environment Variables
-24. API Overview
-25. Data Flow Walkthrough
-26. How Scanning Works
-27. How Monitoring Works
-28. How Model Training Works
-29. Limitations
-30. Security Notes
-31. Performance Notes
-32. Troubleshooting
-33. Maintenance Guide
-34. Extending The Dataset
-35. Extending The Model
-36. Improving Accuracy
-37. Testing Ideas
-38. Production Readiness Notes
-39. Suggested Roadmap
-40. FAQ
-41. Closing Notes
+21. Browser Guard Extension
+22. Deployment On Render
+23. Updating The App On GitHub
+24. Environment Variables
+25. API Overview
+26. Data Flow Walkthrough
+27. How Scanning Works
+28. How Monitoring Works
+29. How Model Training Works
+30. Limitations
+31. Security Notes
+32. Performance Notes
+33. Troubleshooting
+34. Maintenance Guide
+35. Extending The Dataset
+36. Extending The Model
+37. Improving Accuracy
+38. Testing Ideas
+39. Production Readiness Notes
+40. Suggested Roadmap
+41. FAQ
+42. Closing Notes
 
 ## Project Overview
 
@@ -97,6 +98,7 @@ DarkScan AI currently includes:
 - scheduled monitoring email delivery at 8, 12, or 24 hour intervals
 - manual "Share Latest Report Now" action from each monitor card
 - scheduled report delivery even when the user or admin is logged out
+- consent-based browser extension for auto-scanning visited URLs
 - a hybrid threat scoring pipeline
 - a small locally trained text classifier
 - a small locally trained URL classifier
@@ -316,6 +318,72 @@ Example:
 `http://192.168.x.x:3000`
 
 This is useful for quick internal testing on mobile browsers. For public access, deployment behind a real domain is recommended.
+
+## Browser Guard Extension
+
+The repository now includes a consent-based browser extension in the `browser-extension/` folder. This extension is designed to work as an opt-in companion to the app rather than a hidden surveillance tool.
+
+The extension can:
+
+- connect to a DarkScan AI backend with the userâ€™s own credentials
+- watch visited `http` and `https` tabs after the user enables monitoring
+- send visited URLs to the backend for analysis
+- store the resulting threat records in the app
+- keep visited-site scans inside the app instead of directly emailing every browser visit
+- let the user manually scan the current tab on demand
+
+### How to load the extension
+
+For Chromium-based browsers such as Chrome, Microsoft Edge, and Opera:
+
+1. open the browser extension management page
+2. turn on `Developer mode`
+3. choose `Load unpacked`
+4. select the `browser-extension` folder from this repository
+
+Firefox support is partially prepared through WebExtension-compatible code and manifest metadata, but Chromium-based browsers are the easiest first target for this repository.
+
+### How to connect the extension
+
+1. open the extension popup
+2. set `Backend URL` to your app address such as `http://localhost:3000` or your Render URL
+3. enter your DarkScan AI email or user ID and password
+4. click `Connect`
+5. keep `Scan visited tabs automatically` enabled if you want auto-scanning
+6. choose the Browser Guard badge threshold and cooldown window
+
+### How extension scanning behaves
+
+The extension is designed to be explicit and user-controlled. It does not run until the user connects it and enables browser monitoring.
+
+Once enabled, it watches visited tabs and sends the current page URL to the backend. The backend performs analysis, stores the result as a threat record, and keeps the visited-site report inside DarkScan AI. A cooldown helps avoid repeatedly scanning the exact same page too often.
+
+### Preparing Browser Guard for deployment
+
+When your DarkScan AI app is deployed on Render or another public domain, create a deployment-ready Browser Guard bundle with that hosted backend URL prefilled:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\package-browser-extension.ps1 -BackendUrl https://your-service.onrender.com
+```
+
+This packaging step creates:
+
+- `browser-extension/dist/darkscan-ai-browser-guard/`
+- `browser-extension/dist/darkscan-ai-browser-guard-chromium.zip`
+- `browser-extension/dist/darkscan-ai-browser-guard-firefox.xpi`
+- `browser-extension/dist/DEPLOYMENT.txt`
+
+The generated package keeps the same extension code, but replaces the default popup/backend URL with your deployed app domain. That means end users do not have to type the Render URL manually in the extension popup for the first connection.
+
+### Browser Guard distribution options
+
+After deployment, Browser Guard can be distributed in one of three practical ways:
+
+- Manual install for testing or small teams: give users the unpacked package or the Chromium zip and have them load it from their browser extensions page
+- Browser store distribution: upload the Chromium package to Chrome Web Store or Edge Add-ons, and use the Firefox package for Mozilla-style submission
+- Managed enterprise rollout: after the extension is published or approved internally, IT can push it through browser policies on company-managed devices
+
+Important: a normal website cannot auto-install a browser extension for users. The supported paths are explicit user install, browser-store install, or enterprise-managed install.
 
 ## Deployment On Render
 
@@ -548,10 +616,12 @@ The backend exposes routes for:
 - captcha retrieval
 - registration
 - login
+- current user/session lookup
 - threat listing
 - threat deletion
 - threat false-positive flagging
 - quick analysis
+- browser extension visited-URL scan submission
 - monitoring task listing
 - monitoring task creation
 - monitoring task deletion

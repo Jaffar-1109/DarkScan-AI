@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "DarkScan AI Browser Guard",
+  "version": "1.0.0",
+  "description": "Consent-based browser extension that scans visited URLs with your DarkScan AI backend.",
+  "permissions": [
+    "storage",
+    "tabs",
+    "webNavigation"
+  ],
+  "host_permissions": [
+    "<all_urls>",
+    "http://localhost:3000/*",
+    "http://127.0.0.1:3000/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "DarkScan AI Browser Guard",
+    "default_popup": "popup.html"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "darkscan-browser-guard@example.com"
+    }
+  }
+}

@@ -4,6 +4,7 @@ import {
   LayoutDashboard, 
   ShieldAlert, 
   Activity, 
+  Puzzle,
   Users, 
   LogOut, 
   Settings, 
@@ -28,6 +29,7 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
 
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'browser-guard', label: 'Browser Guard', icon: Puzzle },
     { id: 'monitoring', label: 'Monitoring', icon: Activity },
     { id: 'threats', label: 'Threat Reports', icon: ShieldAlert },
   ];

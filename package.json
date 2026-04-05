@@ -9,7 +9,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "package:extension": "powershell -ExecutionPolicy Bypass -File .\\scripts\\package-browser-extension.ps1"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",

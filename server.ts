@@ -169,7 +169,7 @@ const mailTransport = SMTP_HOST && SMTP_USER && SMTP_PASS
   : null;
 
 // Seed Admin if not exists
-console.log(`[System] Admin account configured as: ${ADMIN_USERNAME} / ${ADMIN_EMAIL}`);
+console.log(`[System] Admin account configured as: ${ADMIN_USERNAME} / ${ADMIN_EMAIL} - server.ts:172`);
 
 const hashedAdminPassword = bcrypt.hashSync(ADMIN_PASSWORD, 10);
 const matchedAdmin =
@@ -183,7 +183,7 @@ if (matchedAdmin) {
     SET username = ?, email = ?, password = ?, role = 'admin', alert_email = ?
     WHERE id = ?
   `).run(ADMIN_USERNAME, ADMIN_EMAIL, hashedAdminPassword, ADMIN_EMAIL, matchedAdmin.id);
-  console.log(`[System] Admin account updated successfully: ${ADMIN_EMAIL}`);
+  console.log(`[System] Admin account updated successfully: ${ADMIN_EMAIL} - server.ts:186`);
 } else {
   db.prepare('INSERT INTO users (username, email, password, role, alert_email) VALUES (?, ?, ?, ?, ?)').run(
     ADMIN_USERNAME,
@@ -192,7 +192,7 @@ if (matchedAdmin) {
     'admin',
     ADMIN_EMAIL
   );
-  console.log(`[System] Admin account seeded successfully: ${ADMIN_EMAIL}`);
+  console.log(`[System] Admin account seeded successfully: ${ADMIN_EMAIL} - server.ts:195`);
 }
 
 // Seed initial threats if none exist
@@ -243,7 +243,7 @@ if (threatCount.count === 0) {
   initialThreats.forEach(t => {
     insertThreat.run(adminId, t.platform, t.content, t.risk_score, t.severity, t.prediction, t.links, '127.0.0.1');
   });
-  console.log('[System] Initial threat data seeded.');
+  console.log('[System] Initial threat data seeded. - server.ts:246');
 }
 
 // --- AI Logic (Simplified TF-IDF + Keyword Analysis) ---
@@ -280,7 +280,7 @@ function loadJsonFile<T>(fileName: string, fallback: T): T {
   try {
     return JSON.parse(fs.readFileSync(filePath, 'utf8')) as T;
   } catch (error) {
-    console.error(`[System] Failed to parse ${fileName}:`, error);
+    console.error(`[System] Failed to parse ${fileName}: - server.ts:283`, error);
     return fallback;
   }
 }
@@ -301,7 +301,7 @@ function loadCsvTrainingFile(fileName: string): UrlTrainingSample[] {
       };
     }).filter((sample): sample is UrlTrainingSample => Boolean(sample.value && sample.label));
   } catch (error) {
-    console.error(`[System] Failed to parse ${fileName}:`, error);
+    console.error(`[System] Failed to parse ${fileName}: - server.ts:304`, error);
     return [];
   }
 }
@@ -644,6 +644,37 @@ function validateMonitorInterval(value: number) {
   return ALLOWED_MONITOR_INTERVALS.has(value);
 }
 
+function validateSeverity(value: string) {
+  return value === 'LOW' || value === 'MEDIUM' || value === 'HIGH';
+}
+
+function severityRank(value: string) {
+  switch (value) {
+    case 'HIGH':
+      return 3;
+    case 'MEDIUM':
+      return 2;
+    default:
+      return 1;
+  }
+}
+
+function severityMeetsThreshold(actual: string, minimum: string) {
+  return severityRank(actual) >= severityRank(minimum);
+}
+
+function isAllowedBrowserOrigin(origin: string | undefined) {
+  if (!origin || !APP_URL) return true;
+  return (
+    origin === APP_URL ||
+    origin.startsWith('http://localhost:') ||
+    origin.startsWith('http://127.0.0.1:') ||
+    origin.startsWith('chrome-extension://') ||
+    origin.startsWith('moz-extension://') ||
+    origin.startsWith('edge-extension://')
+  );
+}
+
 function logAdminAction(adminUserId: number, action: string, targetUserId: number | null, details: Record<string, unknown>, ipAddress: string) {
   db.prepare(`
     INSERT INTO admin_audit_logs (admin_user_id, action, target_user_id, details, ip_address)
@@ -660,11 +691,11 @@ function logAdminAction(adminUserId: number, action: string, targetUserId: numbe
 async function sendThreatEmail(recipients: string[], threat: any, links: string[]) {
   const uniqueRecipients = [...new Set(recipients.filter(Boolean).map(value => sanitizeInput(value).toLowerCase()))];
   if (uniqueRecipients.length === 0) {
-    console.log('[Email] Skipping send because no recipients were provided.');
+    console.log('[Email] Skipping send because no recipients were provided. - server.ts:694');
     return false;
   }
   if (!mailTransport) {
-    console.log('[Email] Skipping send because SMTP is not configured.');
+    console.log('[Email] Skipping send because SMTP is not configured. - server.ts:698');
     return false;
   }
 
@@ -687,10 +718,10 @@ async function sendThreatEmail(recipients: string[], threat: any, links: string[
       subject: `[DarkScan AI] ${threat.severity} alert for ${threat.platform}`,
       text: lines.join('\n')
     });
-    console.log(`[Email] Alert delivered to ${uniqueRecipients.join(', ')} for ${threat.platform}`);
+    console.log(`[Email] Alert delivered to ${uniqueRecipients.join(', ')} for ${threat.platform} - server.ts:721`);
     return true;
   } catch (error) {
-    console.error('[Email] Failed to send alert email:', error);
+    console.error('[Email] Failed to send alert email: - server.ts:724', error);
     return false;
   }
 }
@@ -821,7 +852,7 @@ async function scrapeUrl(url: string) {
       links: [...new Set(links)]
     };
   } catch (error) {
-    console.error(`Scraping failed for ${url}:`, error);
+    console.error(`Scraping failed for ${url}: - server.ts:855`, error);
     return null;
   }
 }
@@ -830,15 +861,23 @@ async function scrapeUrl(url: string) {
 async function startServer() {
   const app = express();
   const httpServer = createServer(app);
+  const corsOriginHandler = (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+    if (isAllowedBrowserOrigin(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Origin not allowed'));
+    }
+  };
+
   const io = new Server(httpServer, {
     cors: {
-      origin: APP_URL ? [APP_URL] : true,
+      origin: corsOriginHandler,
       methods: ["GET", "POST"],
       credentials: true
     },
     allowRequest: (req, callback) => {
       const origin = req.headers.origin;
-      if (!APP_URL || !origin || origin === APP_URL || origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
+      if (isAllowedBrowserOrigin(origin)) {
         callback(null, true);
       } else {
         callback('Origin not allowed', false);
@@ -867,7 +906,7 @@ async function startServer() {
   }));
   app.use(express.json({ limit: '1mb' }));
   app.use(cors({
-    origin: APP_URL ? [APP_URL] : true,
+    origin: corsOriginHandler,
     credentials: true
   }));
 
@@ -939,21 +978,21 @@ async function startServer() {
   });
 
   io.on('connection', (socket) => {
-    console.log('[Socket] Client connected:', socket.id);
+    console.log('[Socket] Client connected: - server.ts:981', socket.id);
     
     socket.on('subscribe', (userId) => {
       const sessionUser = (socket.data as any).user;
       if (String(userId) === String(sessionUser?.id)) {
         socket.join(`user:${sessionUser.id}`);
-        console.log(`[Socket] Client ${socket.id} subscribed to user:${sessionUser.id}`);
+        console.log(`[Socket] Client ${socket.id} subscribed to user:${sessionUser.id} - server.ts:987`);
       } else if (String(userId) === 'admin' && sessionUser?.role === 'admin') {
         socket.join('user:admin');
-        console.log(`[Socket] Client ${socket.id} subscribed to user:admin`);
+        console.log(`[Socket] Client ${socket.id} subscribed to user:admin - server.ts:990`);
       }
     });
 
     socket.on('disconnect', () => {
-      console.log('[Socket] Client disconnected:', socket.id);
+      console.log('[Socket] Client disconnected: - server.ts:995', socket.id);
     });
   });
 
@@ -1128,6 +1167,12 @@ async function startServer() {
     }
   });
 
+  app.get('/api/auth/me', authenticateToken, (req: any, res) => {
+    const user = db.prepare('SELECT id, username, email, alert_email, role FROM users WHERE id = ?').get(req.user.id) as any;
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    res.json({ user });
+  });
+
   // Threats
   app.get('/api/threats', authenticateToken, (req: any, res) => {
     const threats = req.user.role === 'admin' 
@@ -1241,7 +1286,7 @@ async function startServer() {
       latestThreat = initialRun.threat;
       initialEmailSent = initialRun.emailSent;
     } catch (error) {
-      console.error(`Initial monitoring scan failed for ${normalizedKeyword}:`, error);
+      console.error(`Initial monitoring scan failed for ${normalizedKeyword}: - server.ts:1289`, error);
     }
 
     const updatedTask = db.prepare('SELECT * FROM monitoring_tasks WHERE id = ?').get(result.lastInsertRowid);
@@ -1421,7 +1466,7 @@ async function startServer() {
 
   // --- Scheduler ---
   cron.schedule('* * * * *', async () => {
-    console.log('Running background monitoring tasks...');
+    console.log('Running background monitoring tasks... - server.ts:1469');
     const tasks = db.prepare("SELECT * FROM monitoring_tasks WHERE status = 'active'").all() as any[];
     
     for (const task of tasks) {
@@ -1429,12 +1474,12 @@ async function startServer() {
       const hoursSince = (Date.now() - lastRun.getTime()) / (1000 * 60 * 60);
       
       if (hoursSince >= task.interval_hours) {
-        console.log(`Monitoring keyword: ${task.keyword}`);
+        console.log(`Monitoring keyword: ${task.keyword} - server.ts:1477`);
         const { threat: newThreat } = await runMonitoringTask(task);
         
         
         if (newThreat.severity === 'HIGH') {
-          console.log(`🚨 ALERT: High risk detected for keyword "${task.keyword}"!`);
+          console.log(`🚨 ALERT: High risk detected for keyword "${task.keyword}"! - server.ts:1482`);
         }
       }
     }
@@ -1467,7 +1512,7 @@ async function startServer() {
   }
 
   httpServer.listen(PORT, '0.0.0.0', () => {
-    console.log(`DarkScan AI Server running on http://localhost:${PORT}`);
+    console.log(`DarkScan AI Server running on http://localhost:${PORT} - server.ts:1515`);
   });
 }
 

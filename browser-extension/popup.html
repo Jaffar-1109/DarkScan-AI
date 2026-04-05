@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DarkScan Browser Guard</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="panel">
+      <header class="hero">
+        <div class="badge">Browser Guard</div>
+        <h1>DarkScan AI</h1>
+        <p>Consent-based auto-scan for visited URLs</p>
+      </header>
+
+      <section class="section">
+        <h2>Connection</h2>
+        <label class="field">
+          <span>Backend URL</span>
+          <input id="backendUrl" type="url" placeholder="http://localhost:3000" />
+        </label>
+        <label class="field">
+          <span>Email or User ID</span>
+          <input id="identifier" type="text" placeholder="Admin_DarkScan.AI" />
+        </label>
+        <label class="field">
+          <span>Password</span>
+          <input id="password" type="password" placeholder="Enter password" />
+        </label>
+        <div class="actions">
+          <button id="connectButton" class="primary">Connect</button>
+          <button id="disconnectButton" class="secondary">Disconnect</button>
+        </div>
+        <p id="connectionStatus" class="hint">Not connected.</p>
+      </section>
+
+      <section class="section">
+        <h2>Monitoring</h2>
+        <label class="toggle">
+          <input id="monitoringEnabled" type="checkbox" />
+          <span>Scan visited tabs automatically</span>
+        </label>
+        <label class="field">
+          <span>Minimum severity for Browser Guard badge</span>
+          <select id="minimumSeverity">
+            <option value="HIGH">High only</option>
+            <option value="MEDIUM">Medium and High</option>
+            <option value="LOW">All visits</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Cooldown for the same page (minutes)</span>
+          <input id="scanCooldownMinutes" type="number" min="1" max="120" step="1" />
+        </label>
+        <div class="actions">
+          <button id="saveButton" class="primary">Save Preferences</button>
+          <button id="scanNowButton" class="secondary">Scan Current Tab</button>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Last Scan</h2>
+        <p id="lastScanStatus" class="status">Idle</p>
+        <p id="lastScanMeta" class="hint">No scan has run yet.</p>
+      </section>
+
+      <footer class="footnote">
+        This extension only works after explicit setup and permission. It sends visited URLs to your DarkScan AI backend for analysis.
+      </footer>
+    </main>
+
+    <script src="popup.js"></script>
+  </body>
+  </html>
