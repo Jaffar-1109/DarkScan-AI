@@ -1,0 +1,5 @@
+﻿root_status=200
+captcha_status=200
+login_ok=True
+me_status=200
+threats_status=200

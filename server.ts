@@ -1340,7 +1340,7 @@ async function startServer() {
       latestThreat = initialRun.threat;
       initialEmailSent = initialRun.emailSent;
     } catch (error) {
-      console.error(`Initial monitoring scan failed for ${normalizedKeyword}: - server.ts:1289`, error);
+      console.error(`Initial monitoring scan failed for ${normalizedKeyword}: - server.ts:1343`, error);
     }
 
     const updatedTask = db.prepare('SELECT * FROM monitoring_tasks WHERE id = ?').get(result.lastInsertRowid);
@@ -1520,7 +1520,7 @@ async function startServer() {
 
   // --- Scheduler ---
   cron.schedule('* * * * *', async () => {
-    console.log('Running background monitoring tasks... - server.ts:1469');
+    console.log('Running background monitoring tasks... - server.ts:1523');
     const tasks = db.prepare("SELECT * FROM monitoring_tasks WHERE status = 'active'").all() as any[];
     
     for (const task of tasks) {
@@ -1528,12 +1528,12 @@ async function startServer() {
       const hoursSince = (Date.now() - lastRun.getTime()) / (1000 * 60 * 60);
       
       if (hoursSince >= task.interval_hours) {
-        console.log(`Monitoring keyword: ${task.keyword} - server.ts:1477`);
+        console.log(`Monitoring keyword: ${task.keyword} - server.ts:1531`);
         const { threat: newThreat } = await runMonitoringTask(task);
         
         
         if (newThreat.severity === 'HIGH') {
-          console.log(`🚨 ALERT: High risk detected for keyword "${task.keyword}"! - server.ts:1482`);
+          console.log(`🚨 ALERT: High risk detected for keyword "${task.keyword}"! - server.ts:1536`);
         }
       }
     }
@@ -1566,7 +1566,7 @@ async function startServer() {
   }
 
   httpServer.listen(PORT, '0.0.0.0', () => {
-    console.log(`DarkScan AI Server running on http://localhost:${PORT} - server.ts:1515`);
+    console.log(`DarkScan AI Server running on http://localhost:${PORT} - server.ts:1569`);
   });
 }
 
