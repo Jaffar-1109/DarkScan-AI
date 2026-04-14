@@ -1,6 +1,6 @@
 # DarkScan AI
 
-DarkScan AI is a locally runnable cyber monitoring and threat analysis application built with a React frontend and an Express backend. The project combines a dashboard-oriented user experience with a lightweight analysis pipeline that can inspect submitted text, URLs, and monitored targets, store results in SQLite, and present them through a real-time interface. It is designed to be approachable for local use, easy to deploy on a service like Render, and flexible enough to evolve from a simple rules engine into a more data-backed detection workflow.
+DarkScan AI is a locally runnable cyber monitoring and threat analysis application built with a React frontend and an Express backend. The project combines a dashboard-oriented user experience with a lightweight analysis pipeline that can inspect submitted text, URLs, and monitored targets, store results in SQLite, and present them through a real-time interface. For free-tier deployment, the app can also sync that SQLite data into MongoDB so user, monitoring, and report data can survive redeploys. It is designed to be approachable for local use, easy to deploy on a service like Render, and flexible enough to evolve from a simple rules engine into a more data-backed detection workflow.
 
 This README is intentionally long and detailed. It is meant to serve as a complete project companion for development, local operation, deployment planning, architecture understanding, troubleshooting, and future extension. If you only need to start the app, jump to the quick start section. If you want to understand how the monitoring engine works, how timestamps are handled, how the model training currently behaves, or what tradeoffs exist in the current implementation, the later sections will be useful.
 
@@ -51,7 +51,7 @@ This README is intentionally long and detailed. It is meant to serve as a comple
 
 ## Project Overview
 
-DarkScan AI is a cyber threat analysis dashboard that accepts text and URLs, performs lightweight intelligence scoring, records the result, and displays the history in a visual interface. It also supports active monitoring tasks that repeatedly inspect configured domains or URLs and emit new threat records over time. The system stores data in a local SQLite database and uses Socket.IO for near real-time updates inside the application UI.
+DarkScan AI is a cyber threat analysis dashboard that accepts text and URLs, performs lightweight intelligence scoring, records the result, and displays the history in a visual interface. It also supports active monitoring tasks that repeatedly inspect configured domains or URLs and emit new threat records over time. The system stores data in a local SQLite database, can mirror that data into MongoDB for durable hosted deployments, and uses Socket.IO for near real-time updates inside the application UI.
 
 The application originally started as a simpler AI Studio-exported project and was then adapted to run correctly in a local environment. Since then, it has been improved to support cleaner localhost execution, better timestamp handling, immediate monitoring scans, deployment preparation for Render, and a small locally trained classification pipeline backed by curated datasets. The current codebase remains lightweight and easy to reason about, which makes it a practical foundation for experimentation and further development.
 
@@ -133,7 +133,7 @@ The important top-level files and folders are:
 - `start-local.ps1`
 - `start-local.cmd`
 
-The `server.ts` file hosts the backend logic, database initialization, auth, API routes, monitoring scheduler, and Vite integration. The `src` directory contains the React frontend. The `data` directory contains the local training datasets and intelligence lists. The database file stores the runtime data locally. The Render YAML defines a deployable web service with a persistent disk.
+The `server.ts` file hosts the backend logic, database initialization, auth, API routes, monitoring scheduler, and Vite integration. The `src` directory contains the React frontend. The `data` directory contains the local training datasets and intelligence lists. The SQLite database file stores the runtime cache locally. The Render YAML defines a deployable web service configured for free-tier hosting with MongoDB-backed persistence.
 
 ## Technology Stack
 
@@ -144,6 +144,7 @@ The project uses:
 - Express for the backend
 - Socket.IO for real-time events
 - SQLite through `better-sqlite3`
+- MongoDB through the native `mongodb` driver for durable hosted persistence
 - JWT for auth sessions
 - bcrypt for password hashing
 - cheerio and axios for basic scraping
@@ -197,10 +198,11 @@ The SQLite database includes the following tables:
 - `threats`
 - `monitoring_tasks`
 - `login_logs`
+- `admin_audit_logs`
 
-The `users` table stores credentials and role information. The `threats` table stores scan results, including content snippet, score, severity, prediction, links, and timestamp. The `monitoring_tasks` table stores recurring scan targets and the last execution time. The `login_logs` table tracks login attempts recorded by the system.
+The `users` table stores credentials and role information. The `threats` table stores scan results, including content snippet, score, severity, prediction, links, and timestamp. The `monitoring_tasks` table stores recurring scan targets and the last execution time. The `login_logs` table tracks login attempts recorded by the system. The `admin_audit_logs` table stores admin-side activity.
 
-SQLite was chosen for simplicity. It is excellent for local development and lightweight deployments. The tradeoff is that it is not the right fit for large-scale horizontally scaled deployments or multi-instance write-heavy systems.
+SQLite was chosen for simplicity. It is excellent for local development and lightweight deployments. In the current hosted setup, SQLite remains the live application store and cache, while MongoDB can be used as the durable backing store so the app can restore state after a Render free-tier restart or redeploy.
 
 ## AI And Detection Overview
 
@@ -391,13 +393,13 @@ Important: a normal website cannot auto-install a browser extension for users. T
 The project includes a `render.yaml` file prepared for deployment as a Render web service. The main requirements for deployment are:
 
 - a Node runtime
-- a persistent disk
 - a production build
-- a stable database path
+- a stable MongoDB connection string
+- a writable temporary SQLite path
 
-Render is a better fit than purely serverless platforms because the app uses a long-running backend process, Socket.IO, scheduling, and SQLite on disk.
+Render is a better fit than purely serverless platforms because the app uses a long-running backend process, Socket.IO, and scheduling. On the free plan, the safest persistence strategy is to keep SQLite as the runtime database and mirror it into MongoDB Atlas.
 
-The included configuration mounts a persistent disk and points the database path to that disk location. It also uses the production build command before starting the server.
+The included configuration uses the production build command before starting the server, stores the runtime SQLite file in `/tmp/darkscan.db`, and restores data from MongoDB when the process starts.
 
 ### Render commands
 
@@ -423,7 +425,7 @@ Use this practical deployment sequence:
 9. wait for the build and startup logs to complete
 10. open the Render URL and verify the app
 
-If you prefer a manual service setup instead of using the Blueprint, create a Node web service, point it to the repository, enter the same build and start commands, and then configure the same environment variables and persistent disk.
+If you prefer a manual service setup instead of using the Blueprint, create a Node web service, point it to the repository, enter the same build and start commands, and then configure the same environment variables. A paid Render disk is not required for this free-tier deployment path.
 
 ### Render deployment checklist
 
@@ -434,6 +436,8 @@ Before the first Render deploy, set these service environment variables:
 - `ADMIN_EMAIL`
 - `ADMIN_PASSWORD`
 - `JWT_SECRET`
+- `MONGODB_URI`
+- `MONGODB_DB_NAME`
 - `SMTP_HOST`
 - `SMTP_PORT`
 - `SMTP_USER`
@@ -448,22 +452,49 @@ Recommended values:
 - `ADMIN_EMAIL` should be the real admin mailbox that receives reports
 - `ADMIN_PASSWORD` should be a strong private password that you do not commit to GitHub
 - `JWT_SECRET` should be long and unique for production
-- `DB_PATH` should be `/opt/render/project/src/data/darkscan.db`
+- `DB_PATH` should be `/tmp/darkscan.db` on the Render free plan
+- `MONGODB_URI` should be your MongoDB Atlas connection string
+- `MONGODB_DB_NAME` can be `darkscan_ai`
 - `SMTP_*` should match your real mail provider or Gmail App Password setup
 
-The `render.yaml` intentionally leaves the sensitive admin and SMTP values unsynced so they can be entered safely in Render instead of being committed into the repository.
+The `render.yaml` intentionally leaves the sensitive admin, MongoDB, and SMTP values unsynced so they can be entered safely in Render instead of being committed into the repository.
 
-### Persistent disk requirement
+### MongoDB persistence on the free plan
 
-Because the app uses SQLite, it should keep its database on persistent storage. That matters because:
+Render free services do not give you a durable local database path. Because of that, this project now uses a two-layer persistence model for free hosting:
 
-- users are stored in the database
-- monitoring tasks are stored in the database
-- threat records are stored in the database
-- login and audit history are stored in the database
-- redeploys should not wipe the app state
+- SQLite remains the live operational database the app already uses
+- MongoDB stores the durable copy of that data
+- when the server starts, it restores SQLite from MongoDB if MongoDB contains data
+- when users, threats, monitoring tasks, or logs change, the app syncs the latest SQLite snapshot back into MongoDB
 
-The included Render configuration already mounts a disk and points `DB_PATH` to that mounted location.
+This keeps the existing code structure intact while allowing free-tier deployment without losing state on every restart.
+
+### Migrating your previous local data into MongoDB
+
+If you already have user data, monitoring tasks, or threat history in your local SQLite file, migrate it before or right after the first Render deploy.
+
+Use this command from the project root after setting `MONGODB_URI`:
+
+```powershell
+$env:MONGODB_URI="your-mongodb-atlas-uri"
+$env:MONGODB_DB_NAME="darkscan_ai"
+$env:SOURCE_DB_PATH="darkscan.predeploy.backup.db"
+npm run migrate:mongo
+```
+
+If `SOURCE_DB_PATH` is not set, the migration script defaults to `darkscan.predeploy.backup.db`.
+
+Recommended source database choices:
+
+- `darkscan.predeploy.backup.db` if you want the preserved pre-deployment backup
+- `darkscan.db` if your latest local database contains the records you want to carry forward
+
+After the migration succeeds, restart or redeploy the Render service. On startup, the app will repopulate its SQLite runtime cache from MongoDB.
+
+### Important data recovery note
+
+If a previous free Render service was deleted and its only copy of data lived in that deleted service filesystem, Render cannot restore that old ephemeral disk data. Your recoverable data is the copy you still have locally, such as `darkscan.db` or `darkscan.predeploy.backup.db`.
 
 ### Scheduled monitoring after deployment
 
@@ -493,6 +524,7 @@ After deployment, verify the following:
 - the monitor card shows both `Last run` and `Next run`
 - the configured email receives the initial monitoring report
 - the manual share action can send the latest saved report by email
+- data still appears after a redeploy because MongoDB restores it
 
 ### Custom domain
 
@@ -548,6 +580,17 @@ Do not commit your real `.env` file if it contains secrets such as:
 
 Only commit `.env.example` as a template. Keep the real `.env` local or store the values in Render environment variables.
 
+If runtime database files were already tracked in Git from earlier local testing, untrack them before your next push so MongoDB becomes the durable source of truth for hosted deployment:
+
+```powershell
+git rm --cached -- *.db
+git rm --cached -- *.bak
+git rm --cached -r .render-data
+git commit -m "Stop tracking local runtime database files"
+```
+
+This does not delete your local database files from disk. It only removes them from future Git commits.
+
 ### Useful commands
 
 See changed files:
@@ -598,7 +641,10 @@ The project supports these important environment variables:
 - `ADMIN_USERNAME`
 - `ADMIN_EMAIL`
 - `ADMIN_PASSWORD`
+- `ADMIN_ALERT_WEBHOOK_URL`
 - `DB_PATH`
+- `MONGODB_URI`
+- `MONGODB_DB_NAME`
 - `NODE_ENV`
 - `SMTP_HOST`
 - `SMTP_PORT`
@@ -606,7 +652,7 @@ The project supports these important environment variables:
 - `SMTP_PASS`
 - `SMTP_FROM`
 
-`PORT` is used by the backend listener. `APP_URL` is used for environment-aware links and deployment configuration. `JWT_SECRET` secures issued tokens. `ADMIN_USERNAME`, `ADMIN_EMAIL`, and `ADMIN_PASSWORD` define the seeded admin account. `DB_PATH` controls where the SQLite file is stored. `NODE_ENV` switches behavior between development and production serving. The `SMTP_*` values enable real email delivery for monitoring alerts and reports.
+`PORT` is used by the backend listener. `APP_URL` is used for environment-aware links and deployment configuration. `JWT_SECRET` secures issued tokens. `ADMIN_USERNAME`, `ADMIN_EMAIL`, and `ADMIN_PASSWORD` define the seeded admin account. `ADMIN_ALERT_WEBHOOK_URL` is an optional Discord-compatible or generic webhook for the admin account. `DB_PATH` controls where the runtime SQLite file is stored. `MONGODB_URI` and `MONGODB_DB_NAME` control the durable hosted persistence layer. `NODE_ENV` switches behavior between development and production serving. The `SMTP_*` values enable real email delivery for monitoring alerts and reports.
 
 The `.env.example` file contains the local template. On Render, values can be managed through the service environment configuration.
 
@@ -666,11 +712,11 @@ That analysis is then stored as a new threat record and returned to the caller.
 
 When a user creates a monitor, the backend normalizes the target. If it looks like a hostname without protocol, the app automatically prefixes it with `https://`. The monitor record is created in the database, and then an initial scan is executed immediately. If that initial scan succeeds, a threat record is created and the monitor’s `last_run` timestamp is updated.
 
-If SMTP is configured correctly, that first run can also send the initial monitoring report email immediately. After that, the scheduler checks active monitors every minute and only runs a task again when the configured `8`, `12`, or `24` hour interval is actually due.
+If SMTP is configured correctly, that first run can also send the initial monitoring report email immediately. Monitors can also send notifications to a Discord-compatible or generic webhook URL, which is especially useful on hosts where SMTP is unavailable. After that, the scheduler checks active monitors every minute and only runs a task again when the configured `8`, `12`, or `24` hour interval is actually due.
 
 This scheduling logic runs on the backend server rather than in the browser. Because of that, monitoring can continue while the user is logged out or while the admin is logged out. The important requirement is that the app server itself must still be running.
 
-Each monitor stores its own `alert_email`, and scheduled reports are sent to that saved recipient. The monitoring UI also includes a manual `Share Latest Report Now` action that sends the latest saved report for that monitor on demand without changing the schedule.
+Each monitor stores its own `alert_email` and optional `alert_webhook_url`, and scheduled reports are sent to those saved notification targets. The monitoring UI also includes a manual `Share Latest Report Now` action that sends the latest saved report for that monitor on demand without changing the schedule.
 
 Later, the scheduler checks due monitors and executes them again. The resulting detections appear like any other threat records and can be reviewed in the reports interface.
 
@@ -867,11 +913,11 @@ Yes. That is one of the easiest and most useful ways to improve the system.
 
 ### Why use SQLite?
 
-Because it keeps local development and simple deployment extremely easy.
+Because it keeps local development and the live app logic extremely simple. For free Render hosting, MongoDB is added as the durable persistence layer behind it.
 
 ### Why use Render instead of Vercel?
 
-Because this app relies on a long-running backend process, a persistent SQLite database, Socket.IO, and cron-style scheduling.
+Because this app relies on a long-running backend process, SQLite runtime storage, Socket.IO, cron-style scheduling, and durable state restoration from MongoDB.
 
 ### Why are safe sites sometimes not exactly zero risk?
 

@@ -19,6 +19,7 @@ import { Server } from 'socket.io';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import nodemailer from 'nodemailer';
+import { createMongoPersistence } from './mongoPersistence';
 
 // --- Types & Interfaces ---
 const __filename = fileURLToPath(import.meta.url);
@@ -39,6 +40,9 @@ const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
 const SMTP_USER = process.env.SMTP_USER || '';
 const SMTP_PASS = process.env.SMTP_PASS || '';
 const SMTP_FROM = process.env.SMTP_FROM || ADMIN_EMAIL;
+const ADMIN_ALERT_WEBHOOK_URL = process.env.ADMIN_ALERT_WEBHOOK_URL || '';
+const MONGODB_URI = process.env.MONGODB_URI || '';
+const MONGODB_DB_NAME = process.env.MONGODB_DB_NAME || 'darkscan_ai';
 const LOCKOUT_WINDOW_MINUTES = Number(process.env.LOCKOUT_WINDOW_MINUTES || 15);
 const MAX_FAILED_LOGIN_ATTEMPTS = Number(process.env.MAX_FAILED_LOGIN_ATTEMPTS || 5);
 const LOCKOUT_DURATION_MINUTES = Number(process.env.LOCKOUT_DURATION_MINUTES || 15);
@@ -51,6 +55,12 @@ const RESOLVED_DB_PATH = path.isAbsolute(DB_PATH_SETTING)
 fs.mkdirSync(path.dirname(RESOLVED_DB_PATH), { recursive: true });
 const db = new Database(RESOLVED_DB_PATH);
 console.log(`[System] Using SQLite database at: ${RESOLVED_DB_PATH} - server.ts:51`);
+const mongoPersistence = await createMongoPersistence({
+  sqlite: db,
+  mongoUri: MONGODB_URI,
+  mongoDbName: MONGODB_DB_NAME,
+  logger: console
+});
 
 // Initialize tables
 db.exec(`
@@ -61,6 +71,7 @@ db.exec(`
     password TEXT,
     role TEXT DEFAULT 'user',
     alert_email TEXT,
+    alert_webhook_url TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -84,6 +95,7 @@ db.exec(`
     user_id INTEGER,
     keyword TEXT,
     alert_email TEXT,
+    alert_webhook_url TEXT,
     interval_hours INTEGER,
     last_run DATETIME,
     status TEXT DEFAULT 'active',
@@ -120,8 +132,10 @@ function ensureColumn(table: string, column: string, definition: string) {
 
 ensureColumn('users', 'username', 'username TEXT');
 ensureColumn('users', 'alert_email', 'alert_email TEXT');
+ensureColumn('users', 'alert_webhook_url', 'alert_webhook_url TEXT');
 ensureColumn('threats', 'ip_address', 'ip_address TEXT');
 ensureColumn('monitoring_tasks', 'alert_email', 'alert_email TEXT');
+ensureColumn('monitoring_tasks', 'alert_webhook_url', 'alert_webhook_url TEXT');
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_unique ON users(username)');
 db.exec(`
   UPDATE monitoring_tasks
@@ -136,10 +150,24 @@ db.exec(`
     FROM users u
     WHERE u.id = monitoring_tasks.user_id
   ), '${ADMIN_EMAIL}')
-  WHERE alert_email IS NULL
-    OR TRIM(alert_email) = ''
-    OR LOWER(alert_email) = 'alerts@example.com';
+  WHERE (
+      alert_email IS NULL
+      OR TRIM(alert_email) = ''
+      OR LOWER(alert_email) = 'alerts@example.com'
+    )
+    AND (
+      alert_webhook_url IS NULL
+      OR TRIM(alert_webhook_url) = ''
+    );
 `);
+if (ADMIN_ALERT_WEBHOOK_URL) {
+  db.prepare(`
+    UPDATE users
+    SET alert_webhook_url = ?
+    WHERE role = 'admin'
+      AND (alert_webhook_url IS NULL OR TRIM(alert_webhook_url) = '')
+  `).run(ADMIN_ALERT_WEBHOOK_URL);
+}
 db.exec(`
   UPDATE threats
   SET ip_address = COALESCE((
@@ -157,6 +185,10 @@ db.exec(`
     OR TRIM(ip_address) = ''
     OR LOWER(ip_address) IN ('unknown', 'system');
 `);
+
+if (mongoPersistence.enabled) {
+  await mongoPersistence.restoreFromMongo();
+}
 
 const mailTransport = SMTP_HOST && SMTP_USER && SMTP_PASS
   ? nodemailer.createTransport({
@@ -185,17 +217,25 @@ const matchedAdmin =
 if (matchedAdmin) {
   db.prepare(`
     UPDATE users
-    SET username = ?, email = ?, password = ?, role = 'admin', alert_email = ?
+    SET username = ?, email = ?, password = ?, role = 'admin', alert_email = ?, alert_webhook_url = ?
     WHERE id = ?
-  `).run(ADMIN_USERNAME, ADMIN_EMAIL, hashedAdminPassword, ADMIN_EMAIL, matchedAdmin.id);
+  `).run(
+    ADMIN_USERNAME,
+    ADMIN_EMAIL,
+    hashedAdminPassword,
+    ADMIN_EMAIL,
+    ADMIN_ALERT_WEBHOOK_URL || matchedAdmin.alert_webhook_url || null,
+    matchedAdmin.id
+  );
   console.log(`[System] Admin account updated successfully: ${ADMIN_EMAIL} - server.ts:186`);
 } else {
-  db.prepare('INSERT INTO users (username, email, password, role, alert_email) VALUES (?, ?, ?, ?, ?)').run(
+  db.prepare('INSERT INTO users (username, email, password, role, alert_email, alert_webhook_url) VALUES (?, ?, ?, ?, ?, ?)').run(
     ADMIN_USERNAME,
     ADMIN_EMAIL,
     hashedAdminPassword,
     'admin',
-    ADMIN_EMAIL
+    ADMIN_EMAIL,
+    ADMIN_ALERT_WEBHOOK_URL || null
   );
   console.log(`[System] Admin account seeded successfully: ${ADMIN_EMAIL} - server.ts:195`);
 }
@@ -249,6 +289,10 @@ if (threatCount.count === 0) {
     insertThreat.run(adminId, t.platform, t.content, t.risk_score, t.severity, t.prediction, t.links, '127.0.0.1');
   });
   console.log('[System] Initial threat data seeded. - server.ts:246');
+}
+
+if (mongoPersistence.enabled) {
+  await mongoPersistence.queueSync('startup-seed');
 }
 
 // --- AI Logic (Simplified TF-IDF + Keyword Analysis) ---
@@ -427,6 +471,15 @@ function validatePasswordStrength(password: string) {
 
 function isValidEmail(email: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function isValidWebhookUrl(value: string) {
+  try {
+    const url = new URL(sanitizeInput(value));
+    return url.protocol === 'https:' || url.protocol === 'http:';
+  } catch {
+    return false;
+  }
 }
 
 const emailDomainValidationCache = new Map<string, { valid: boolean; checkedAt: number }>();
@@ -691,6 +744,7 @@ function logAdminAction(adminUserId: number, action: string, targetUserId: numbe
     JSON.stringify(details),
     normalizeIpAddress(ipAddress)
   );
+  void mongoPersistence.queueSync(`admin-audit:${action}`);
 }
 
 async function sendThreatEmail(recipients: string[], threat: any, links: string[]) {
@@ -729,6 +783,83 @@ async function sendThreatEmail(recipients: string[], threat: any, links: string[
     console.error('[Email] Failed to send alert email: - server.ts:724', error);
     return false;
   }
+}
+
+async function sendThreatWebhook(webhookUrl: string, threat: any, links: string[]) {
+  const sanitizedWebhookUrl = sanitizeInput(webhookUrl);
+  if (!sanitizedWebhookUrl || !isValidWebhookUrl(sanitizedWebhookUrl)) {
+    return false;
+  }
+
+  const safeLinks = links.filter(Boolean);
+  const messageLines = [
+    `DarkScan AI Alert`,
+    `Source: ${threat.platform}`,
+    `Risk Score: ${threat.risk_score}`,
+    `Severity: ${threat.severity}`,
+    `Prediction: ${threat.prediction}`,
+    `IP Address: ${threat.ip_address}`,
+    `Detected At: ${threat.detected_at}`,
+    `Content: ${threat.content}`,
+    `Links: ${safeLinks.join(', ') || 'None'}`
+  ];
+
+  try {
+    if (/^https?:\/\/(canary\.)?discord(app)?\.com\/api\/webhooks\//i.test(sanitizedWebhookUrl)) {
+      await axios.post(sanitizedWebhookUrl, {
+        content: [
+          `**DarkScan AI ${threat.severity} Alert**`,
+          `**Source:** ${threat.platform}`,
+          `**Risk Score:** ${threat.risk_score}`,
+          `**Prediction:** ${threat.prediction}`,
+          `**IP Address:** ${threat.ip_address}`,
+          `**Detected At:** ${threat.detected_at}`,
+          safeLinks.length ? `**Links:** ${safeLinks.join(', ')}` : '**Links:** None'
+        ].join('\n')
+      }, {
+        timeout: 10000
+      });
+    } else {
+      await axios.post(sanitizedWebhookUrl, {
+        app: 'DarkScan AI',
+        event: 'threat_alert',
+        threat: {
+          platform: threat.platform,
+          risk_score: threat.risk_score,
+          severity: threat.severity,
+          prediction: threat.prediction,
+          ip_address: threat.ip_address,
+          detected_at: threat.detected_at,
+          content: threat.content,
+          links: safeLinks
+        }
+      }, {
+        timeout: 10000
+      });
+    }
+
+    console.log(`[Webhook] Alert delivered to ${sanitizedWebhookUrl} for ${threat.platform} - server.ts:786`);
+    return true;
+  } catch (error) {
+    console.error('[Webhook] Failed to send alert webhook: - server.ts:789', error);
+    return false;
+  }
+}
+
+async function sendThreatNotifications(options: {
+  recipients?: string[];
+  webhookUrl?: string | null | undefined;
+  threat: any;
+  links: string[];
+}) {
+  const emailSent = await sendThreatEmail(options.recipients || [], options.threat, options.links);
+  const webhookSent = await sendThreatWebhook(options.webhookUrl || '', options.threat, options.links);
+
+  return {
+    emailSent,
+    webhookSent,
+    anySent: emailSent || webhookSent
+  };
 }
 
 function analyzeThreat(text: string, links: string[]) {
@@ -1050,14 +1181,16 @@ async function startServer() {
     const threat = createThreatRecord(task.user_id, target, content, analysis, links, ipAddress);
 
     db.prepare('UPDATE monitoring_tasks SET last_run = CURRENT_TIMESTAMP WHERE id = ?').run(task.id);
+    await mongoPersistence.queueSync('monitoring-run');
     emitThreat(task.user_id, threat);
-    const emailSent = await sendThreatEmail(
-      [task.alert_email],
+    const notificationResult = await sendThreatNotifications({
+      recipients: task.alert_email ? [task.alert_email] : [],
+      webhookUrl: task.alert_webhook_url,
       threat,
       links
-    );
+    });
 
-    return { threat, emailSent };
+    return { threat, ...notificationResult };
   };
 
   // --- API Routes ---
@@ -1100,9 +1233,13 @@ async function startServer() {
     const password = String(req.body.password || '');
     const requestedUsername = sanitizeInput(req.body.username || '');
     const alertEmail = sanitizeInput(req.body.alert_email || email);
+    const alertWebhookUrl = sanitizeInput(req.body.alert_webhook_url || '');
 
     if (!isValidEmail(email) || !isValidEmail(alertEmail)) {
       return res.status(400).json({ error: 'Please enter a valid email address format.' });
+    }
+    if (alertWebhookUrl && !isValidWebhookUrl(alertWebhookUrl)) {
+      return res.status(400).json({ error: 'Please enter a valid webhook URL.' });
     }
 
     const [isPrimaryEmailAuthentic, isAlertEmailAuthentic] = await Promise.all([
@@ -1123,12 +1260,14 @@ async function startServer() {
         ? generateUniqueUsername(requestedUsername)
         : generateUniqueUsername(getBaseUsername(email));
       const hashedPassword = bcrypt.hashSync(password, 10);
-      db.prepare('INSERT INTO users (username, email, password, alert_email) VALUES (?, ?, ?, ?)').run(
+      db.prepare('INSERT INTO users (username, email, password, alert_email, alert_webhook_url) VALUES (?, ?, ?, ?, ?)').run(
         username,
         email,
         hashedPassword,
-        alertEmail
+        alertEmail,
+        alertWebhookUrl || null
       );
+      await mongoPersistence.queueSync('auth-register');
       res.status(201).json({ message: 'User registered', username });
     } catch (err) {
       res.status(400).json({ error: 'Email or user id already exists' });
@@ -1154,6 +1293,7 @@ async function startServer() {
         }
       );
       db.prepare('INSERT INTO login_logs (user_id, ip_address, status) VALUES (?, ?, ?)').run(user.id, getClientIp(req), 'success');
+      void mongoPersistence.queueSync('auth-login-success');
       res.json({
         token,
         user: {
@@ -1161,19 +1301,21 @@ async function startServer() {
           username: user.username,
           email: user.email,
           alert_email: user.alert_email,
+          alert_webhook_url: user.alert_webhook_url,
           role: user.role
         }
       });
     } else {
       if (user) {
         db.prepare('INSERT INTO login_logs (user_id, ip_address, status) VALUES (?, ?, ?)').run(user.id, getClientIp(req), 'failed');
+        void mongoPersistence.queueSync('auth-login-failed');
       }
       res.status(401).json({ error: 'Invalid credentials' });
     }
   });
 
   app.get('/api/auth/me', authenticateToken, (req: any, res) => {
-    const user = db.prepare('SELECT id, username, email, alert_email, role FROM users WHERE id = ?').get(req.user.id) as any;
+    const user = db.prepare('SELECT id, username, email, alert_email, alert_webhook_url, role FROM users WHERE id = ?').get(req.user.id) as any;
     if (!user) return res.status(404).json({ error: 'User not found' });
     res.json({ user });
   });
@@ -1215,12 +1357,21 @@ async function startServer() {
     const newThreat = createThreatRecord(req.user.id, normalizedUrl, content, analysis, links, getClientIp(req));
 
     emitThreat(req.user.id, newThreat);
+    await mongoPersistence.queueSync('extension-scan-visit');
 
     let emailSent = false;
+    let webhookSent = false;
     if (emailReports && severityMeetsThreshold(analysis.severity, minimumSeverity)) {
-      const currentUser = db.prepare('SELECT email, alert_email FROM users WHERE id = ?').get(req.user.id) as any;
+      const currentUser = db.prepare('SELECT email, alert_email, alert_webhook_url FROM users WHERE id = ?').get(req.user.id) as any;
       const recipient = sanitizeInput(currentUser?.alert_email || currentUser?.email || '');
-      emailSent = await sendThreatEmail(recipient ? [recipient] : [], newThreat, links);
+      const notificationResult = await sendThreatNotifications({
+        recipients: recipient ? [recipient] : [],
+        webhookUrl: currentUser?.alert_webhook_url,
+        threat: newThreat,
+        links
+      });
+      emailSent = notificationResult.emailSent;
+      webhookSent = notificationResult.webhookSent;
     }
 
     res.json({
@@ -1228,6 +1379,7 @@ async function startServer() {
       threat: newThreat,
       analysis,
       email_sent: emailSent,
+      webhook_sent: webhookSent,
       minimum_severity: minimumSeverity
     });
   });
@@ -1240,7 +1392,7 @@ async function startServer() {
     res.json(threats.map(formatThreatRecord));
   });
 
-  app.patch('/api/threats/:id/flag', authenticateToken, (req: any, res) => {
+  app.patch('/api/threats/:id/flag', authenticateToken, async (req: any, res) => {
     try {
       const { id } = req.params;
       const { is_false_positive } = req.body;
@@ -1252,6 +1404,7 @@ async function startServer() {
       }
 
       db.prepare('UPDATE threats SET is_false_positive = ? WHERE id = ?').run(is_false_positive ? 1 : 0, id);
+      await mongoPersistence.queueSync('threat-flag');
       
       res.json({ success: true });
     } catch (err) {
@@ -1260,7 +1413,7 @@ async function startServer() {
     }
   });
 
-  app.delete('/api/threats/:id', authenticateToken, (req: any, res) => {
+  app.delete('/api/threats/:id', authenticateToken, async (req: any, res) => {
     const { id } = req.params;
     const threat = db.prepare('SELECT * FROM threats WHERE id = ?').get(id) as any;
     
@@ -1270,6 +1423,7 @@ async function startServer() {
     }
 
     db.prepare('DELETE FROM threats WHERE id = ?').run(id);
+    await mongoPersistence.queueSync('threat-delete');
     res.json({ message: 'Threat deleted' });
   });
 
@@ -1302,6 +1456,7 @@ async function startServer() {
     const newThreat = createThreatRecord(req.user.id, normalizedUrl || 'Manual Input', content, analysis, links, getClientIp(req));
     
     emitThreat(req.user.id, newThreat);
+    await mongoPersistence.queueSync('manual-analyze');
 
     res.json({ id: newThreat.id, detected_at: newThreat.detected_at, ip_address: newThreat.ip_address, ...analysis, links });
   });
@@ -1316,13 +1471,22 @@ async function startServer() {
     const keyword = sanitizeInput(req.body.keyword || '');
     const intervalHours = Number(req.body.interval_hours);
     const alertEmail = sanitizeInput(req.body.alert_email || '');
+    const alertWebhookUrl = sanitizeInput(req.body.alert_webhook_url || '');
 
     if (!keyword) {
       return res.status(400).json({ error: 'Target is required.' });
     }
 
-    if (!isValidEmail(alertEmail)) {
-      return res.status(400).json({ error: 'A valid alert email address is required.' });
+    if (!alertEmail && !alertWebhookUrl) {
+      return res.status(400).json({ error: 'Provide at least one notification target: alert email or webhook URL.' });
+    }
+
+    if (alertEmail && !isValidEmail(alertEmail)) {
+      return res.status(400).json({ error: 'Please enter a valid alert email address.' });
+    }
+
+    if (alertWebhookUrl && !isValidWebhookUrl(alertWebhookUrl)) {
+      return res.status(400).json({ error: 'Please enter a valid webhook URL.' });
     }
 
     if (!Number.isFinite(intervalHours) || !validateMonitorInterval(intervalHours)) {
@@ -1330,20 +1494,24 @@ async function startServer() {
     }
 
     const normalizedKeyword = normalizeTarget(keyword);
-    const result = db.prepare('INSERT INTO monitoring_tasks (user_id, keyword, alert_email, interval_hours) VALUES (?, ?, ?, ?)').run(
+    const result = db.prepare('INSERT INTO monitoring_tasks (user_id, keyword, alert_email, alert_webhook_url, interval_hours) VALUES (?, ?, ?, ?, ?)').run(
       req.user.id,
       normalizedKeyword,
-      alertEmail,
+      alertEmail || null,
+      alertWebhookUrl || null,
       intervalHours
     );
+    await mongoPersistence.queueSync('monitoring-create');
     const task = db.prepare('SELECT * FROM monitoring_tasks WHERE id = ?').get(result.lastInsertRowid) as any;
 
     let latestThreat = null;
     let initialEmailSent = false;
+    let initialWebhookSent = false;
     try {
       const initialRun = await runMonitoringTask(task);
       latestThreat = initialRun.threat;
       initialEmailSent = initialRun.emailSent;
+      initialWebhookSent = initialRun.webhookSent;
     } catch (error) {
       console.error(`Initial monitoring scan failed for ${normalizedKeyword}: - server.ts:1343`, error);
     }
@@ -1353,21 +1521,23 @@ async function startServer() {
       message: 'Task created',
       task: formatMonitoringTask(updatedTask),
       latestThreat,
-      initial_email_sent: initialEmailSent
+      initial_email_sent: initialEmailSent,
+      initial_webhook_sent: initialWebhookSent
     });
   });
 
-  app.delete('/api/tasks/:id', authenticateToken, (req: any, res) => {
+  app.delete('/api/tasks/:id', authenticateToken, async (req: any, res) => {
     const { id } = req.params;
     const task = db.prepare('SELECT * FROM monitoring_tasks WHERE id = ?').get(id) as any;
     if (!task) return res.status(404).json({ error: 'Task not found' });
     if (task.user_id !== req.user.id && req.user.role !== 'admin') return res.status(403).json({ error: 'Unauthorized' });
     
     db.prepare('DELETE FROM monitoring_tasks WHERE id = ?').run(id);
+    await mongoPersistence.queueSync('monitoring-delete');
     res.json({ message: 'Task deleted' });
   });
 
-  app.patch('/api/tasks/:id/status', authenticateToken, (req: any, res) => {
+  app.patch('/api/tasks/:id/status', authenticateToken, async (req: any, res) => {
     const { id } = req.params;
     const status = sanitizeInput(req.body.status || '');
     const task = db.prepare('SELECT * FROM monitoring_tasks WHERE id = ?').get(id) as any;
@@ -1379,6 +1549,7 @@ async function startServer() {
     }
 
     db.prepare('UPDATE monitoring_tasks SET status = ? WHERE id = ?').run(status, id);
+    await mongoPersistence.queueSync('monitoring-status');
     const updatedTask = db.prepare('SELECT * FROM monitoring_tasks WHERE id = ?').get(id);
     res.json({ message: 'Status updated', task: formatMonitoringTask(updatedTask) });
   });
@@ -1396,22 +1567,29 @@ async function startServer() {
     }
 
     const formattedThreat = formatThreatRecord(latestThreat);
-    const emailSent = await sendThreatEmail([task.alert_email], formattedThreat, parseThreatLinks(latestThreat.links));
+    const notificationResult = await sendThreatNotifications({
+      recipients: task.alert_email ? [task.alert_email] : [],
+      webhookUrl: task.alert_webhook_url,
+      threat: formattedThreat,
+      links: parseThreatLinks(latestThreat.links)
+    });
 
-    if (!emailSent) {
-      return res.status(500).json({ error: 'Failed to share the monitoring report by email.' });
+    if (!notificationResult.anySent) {
+      return res.status(500).json({ error: 'Failed to share the monitoring report using the configured notification channels.' });
     }
 
     res.json({
-      message: `Monitoring report shared to ${task.alert_email}.`,
-      recipient: task.alert_email,
+      message: 'Monitoring report shared successfully.',
+      recipient: task.alert_email || null,
+      webhook_url: task.alert_webhook_url || null,
+      notifications: notificationResult,
       report: formattedThreat
     });
   });
 
   // Admin
   app.get('/api/admin/users', authenticateToken, isAdmin, (req, res) => {
-    const users = db.prepare('SELECT id, username, email, alert_email, role, created_at FROM users').all();
+    const users = db.prepare('SELECT id, username, email, alert_email, alert_webhook_url, role, created_at FROM users').all();
     res.json(users);
   });
 
@@ -1424,7 +1602,7 @@ async function startServer() {
     }
 
     const user = db.prepare(`
-      SELECT id, username, email, alert_email, role, created_at
+      SELECT id, username, email, alert_email, alert_webhook_url, role, created_at
       FROM users
       WHERE id = ?
     `).get(userId) as any;
@@ -1472,7 +1650,7 @@ async function startServer() {
     });
   });
 
-  app.delete('/api/admin/users/:id', authenticateToken, isAdmin, (req: any, res) => {
+  app.delete('/api/admin/users/:id', authenticateToken, isAdmin, async (req: any, res) => {
     const { id } = req.params;
     if (Number(id) === req.user.id) return res.status(400).json({ error: 'Cannot delete yourself' });
 
@@ -1488,10 +1666,11 @@ async function startServer() {
       username: targetUser.username,
       role: targetUser.role
     }, getClientIp(req));
+    await mongoPersistence.queueSync('admin-delete-user');
     res.json({ message: 'User deleted' });
   });
 
-  app.patch('/api/admin/users/:id/role', authenticateToken, isAdmin, (req: any, res) => {
+  app.patch('/api/admin/users/:id/role', authenticateToken, isAdmin, async (req: any, res) => {
     const { id } = req.params;
     const role = sanitizeInput(req.body.role || '');
     if (Number(id) === req.user.id) return res.status(400).json({ error: 'Cannot change your own role' });
@@ -1510,6 +1689,7 @@ async function startServer() {
       previousRole: targetUser.role,
       newRole: role
     }, getClientIp(req));
+    await mongoPersistence.queueSync('admin-change-role');
     res.json({ message: 'Role updated' });
   });
 
@@ -1572,6 +1752,18 @@ async function startServer() {
 
   httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`DarkScan AI Server running on http://localhost:${PORT} - server.ts:1569`);
+  });
+}
+
+async function shutdown(signal: string) {
+  console.log(`[System] Received ${signal}. Closing resources...`);
+  await mongoPersistence.close();
+  process.exit(0);
+}
+
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.once(signal, () => {
+    void shutdown(signal);
   });
 }
 

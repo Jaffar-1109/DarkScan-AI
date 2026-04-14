@@ -5,6 +5,7 @@ interface User {
   username?: string;
   email: string;
   alert_email?: string;
+  alert_webhook_url?: string;
   role: 'user' | 'admin';
 }
 

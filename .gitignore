@@ -4,6 +4,11 @@ dist/
 coverage/
 .DS_Store
 *.log
+*.db
+*.sqlite
+*.sqlite3
+*.bak
+.render-data/
 .env*
 !.env.example
 browser-extension/dist/

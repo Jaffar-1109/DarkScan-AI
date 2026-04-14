@@ -27,6 +27,7 @@ export default function Monitoring() {
   const [shareTaskId, setShareTaskId] = useState<number | null>(null);
   const [newKeyword, setNewKeyword] = useState('');
   const [alertEmail, setAlertEmail] = useState('');
+  const [alertWebhookUrl, setAlertWebhookUrl] = useState('');
   const [newInterval, setNewInterval] = useState('24');
   const { token, user } = useAuth();
   const { socket } = useSocket();
@@ -60,6 +61,7 @@ export default function Monitoring() {
 
   useEffect(() => {
     setAlertEmail(user?.alert_email || user?.email || '');
+    setAlertWebhookUrl(user?.alert_webhook_url || '');
   }, [user]);
 
   useEffect(() => {
@@ -90,19 +92,26 @@ export default function Monitoring() {
         body: JSON.stringify({ 
           keyword: newKeyword, 
           alert_email: alertEmail,
+          alert_webhook_url: alertWebhookUrl,
           interval_hours: parseInt(newInterval) 
         })
       });
       const data = await res.json();
       if (res.ok) {
+        const deliveredChannels = [
+          data.initial_email_sent && alertEmail ? `email (${alertEmail})` : null,
+          data.initial_webhook_sent && alertWebhookUrl ? 'webhook' : null
+        ].filter(Boolean);
+
         toast.success(
-          data.initial_email_sent
-            ? `Monitoring started. Initial report emailed to ${alertEmail}.`
-            : 'Monitoring started. Initial scan completed, but email was not confirmed as sent.'
+          deliveredChannels.length > 0
+            ? `Monitoring started. Initial report sent via ${deliveredChannels.join(' and ')}.`
+            : 'Monitoring started. Initial scan completed and scheduled notifications are configured.'
         );
         setShowModal(false);
         setNewKeyword('');
         setAlertEmail(user?.alert_email || user?.email || '');
+        setAlertWebhookUrl(user?.alert_webhook_url || '');
         fetchTasks();
       } else {
         toast.error(data.error || 'Failed to create task');
@@ -198,8 +207,8 @@ export default function Monitoring() {
 
       <div className="rounded-2xl border border-border bg-card/70 px-5 py-4">
         <p className="text-sm text-muted-foreground leading-relaxed">
-          Scheduled monitoring emails are sent by the server at the selected <span className="font-semibold text-foreground">8 / 12 / 24 hour</span> interval even if the user or admin is logged out.
-          Keep the app server running for the schedule to continue.
+          Scheduled monitoring notifications are sent by the server at the selected <span className="font-semibold text-foreground">8 / 12 / 24 hour</span> interval even if the user or admin is logged out.
+          You can use email, a Discord or generic webhook URL, or both. Keep the app server running for the schedule to continue.
         </p>
       </div>
 
@@ -258,8 +267,13 @@ export default function Monitoring() {
                 Every {task.interval_hours} hours
               </div>
               <p className="text-xs text-muted-foreground mb-4">
-                Alerts to: {task.alert_email}
+                Alerts to: {task.alert_email || 'Email not set'}
               </p>
+              {task.alert_webhook_url && (
+                <p className="text-xs text-muted-foreground mb-4 break-all">
+                  Webhook: Enabled
+                </p>
+              )}
 
               <div className="flex items-center justify-between pt-4 border-t border-border">
                 <div className="min-w-0">
@@ -426,14 +440,31 @@ export default function Monitoring() {
                   <label className="text-sm font-medium">Alert Email Address</label>
                   <input
                     type="email"
-                    required
                     value={alertEmail}
                     onChange={(e) => setAlertEmail(e.target.value)}
                     className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:ring-2 focus:ring-primary outline-none transition-all"
                     placeholder="alerts@example.com"
                   />
                   <p className="text-xs text-muted-foreground">
-                    Monitoring alerts and reports will be shared only to this email based on the selected schedule.
+                    Optional. Use this when SMTP email is available.
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Webhook URL</label>
+                  <input
+                    type="url"
+                    value={alertWebhookUrl}
+                    onChange={(e) => setAlertWebhookUrl(e.target.value)}
+                    className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:ring-2 focus:ring-primary outline-none transition-all"
+                    placeholder="https://discord.com/api/webhooks/..."
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Optional. Works on free hosting and supports Discord-compatible webhook URLs.
+                  </p>
+                </div>
+                <div className="rounded-xl border border-border/60 bg-muted/20 px-4 py-3">
+                  <p className="text-xs text-muted-foreground">
+                    Add at least one notification target: <span className="font-semibold text-foreground">email</span> or <span className="font-semibold text-foreground">webhook URL</span>.
                   </p>
                 </div>
                 <div className="flex gap-3 pt-4">

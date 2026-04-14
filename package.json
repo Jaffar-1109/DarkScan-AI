@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "package:extension": "powershell -ExecutionPolicy Bypass -File .\\scripts\\package-browser-extension.ps1"
+    "package:extension": "powershell -ExecutionPolicy Bypass -File .\\scripts\\package-browser-extension.ps1",
+    "migrate:mongo": "tsx scripts/migrate-sqlite-to-mongo.ts"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
@@ -39,6 +40,7 @@
     "lucide-react": "^0.546.0",
     "ml-random-forest": "^2.1.0",
     "motion": "^12.23.24",
+    "mongodb": "^7.1.1",
     "natural": "^8.1.1",
     "node-cron": "^4.2.1",
     "nodemailer": "^8.0.4",
