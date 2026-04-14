@@ -44,9 +44,9 @@ function AppContent() {
   };
 
   return (
-    <div className="flex h-screen bg-background text-foreground overflow-hidden">
+    <div className="flex h-screen overflow-hidden bg-background text-foreground">
       <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
-      <main className="flex-1 overflow-y-auto relative">
+      <main className="relative min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
         <AnimatePresence mode="wait">
           <motion.div
             key={activeTab}
@@ -54,7 +54,7 @@ function AppContent() {
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: -20 }}
             transition={{ duration: 0.2 }}
-            className="min-h-full"
+            className="min-h-full min-w-0"
           >
             {renderContent()}
           </motion.div>

@@ -29,9 +29,22 @@ const natural = require('natural') as typeof import('natural');
 
 const PORT = Number(process.env.PORT || 3000);
 const JWT_SECRET = process.env.JWT_SECRET || 'darkscan_secret_key';
-const DB_PATH_SETTING = process.env.DB_PATH || 'darkscan.db';
+const IS_RAILWAY = Boolean(
+  process.env.RAILWAY_PROJECT_ID ||
+  process.env.RAILWAY_ENVIRONMENT_ID ||
+  process.env.RAILWAY_PUBLIC_DOMAIN
+);
+const RAILWAY_VOLUME_MOUNT_PATH = process.env.RAILWAY_VOLUME_MOUNT_PATH || '';
+const DB_PATH_SETTING =
+  process.env.DB_PATH ||
+  (RAILWAY_VOLUME_MOUNT_PATH
+    ? path.join(RAILWAY_VOLUME_MOUNT_PATH, 'darkscan.db')
+    : IS_RAILWAY
+      ? '/tmp/darkscan.db'
+      : 'darkscan.db');
 const DATA_DIR = path.join(__dirname, 'data');
-const APP_URL = process.env.APP_URL || '';
+const RAILWAY_PUBLIC_DOMAIN = process.env.RAILWAY_PUBLIC_DOMAIN || '';
+const APP_URL = process.env.APP_URL || (RAILWAY_PUBLIC_DOMAIN ? `https://${RAILWAY_PUBLIC_DOMAIN}` : '');
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'jaffar.def1109@gmail.com';
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'Admin_DarkScan.AI';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'Jaffar_1109';
@@ -41,7 +54,12 @@ const SMTP_USER = process.env.SMTP_USER || '';
 const SMTP_PASS = process.env.SMTP_PASS || '';
 const SMTP_FROM = process.env.SMTP_FROM || ADMIN_EMAIL;
 const ADMIN_ALERT_WEBHOOK_URL = process.env.ADMIN_ALERT_WEBHOOK_URL || '';
-const MONGODB_URI = process.env.MONGODB_URI || '';
+const MONGODB_URI =
+  process.env.MONGODB_URI ||
+  process.env.MONGO_URL ||
+  process.env.MONGODB_URL ||
+  process.env.DATABASE_URL ||
+  '';
 const MONGODB_DB_NAME = process.env.MONGODB_DB_NAME || 'darkscan_ai';
 const LOCKOUT_WINDOW_MINUTES = Number(process.env.LOCKOUT_WINDOW_MINUTES || 15);
 const MAX_FAILED_LOGIN_ATTEMPTS = Number(process.env.MAX_FAILED_LOGIN_ATTEMPTS || 5);
@@ -55,6 +73,9 @@ const RESOLVED_DB_PATH = path.isAbsolute(DB_PATH_SETTING)
 fs.mkdirSync(path.dirname(RESOLVED_DB_PATH), { recursive: true });
 const db = new Database(RESOLVED_DB_PATH);
 console.log(`[System] Using SQLite database at: ${RESOLVED_DB_PATH} - server.ts:51`);
+if (IS_RAILWAY && !RAILWAY_VOLUME_MOUNT_PATH && !process.env.DB_PATH) {
+  console.warn('[System] Railway detected without a mounted volume. SQLite will be ephemeral until you attach a Railway volume or set DB_PATH explicitly.');
+}
 const mongoPersistence = await createMongoPersistence({
   sqlite: db,
   mongoUri: MONGODB_URI,

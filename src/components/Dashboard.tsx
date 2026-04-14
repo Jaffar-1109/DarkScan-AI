@@ -281,9 +281,9 @@ export default function Dashboard({ setActiveTab }: DashboardProps) {
   const riskLevel = getRiskLevel(stats[3].value);
 
   return (
-    <div className="p-8 space-y-8">
-      <div className="flex justify-between items-center">
-        <div>
+    <div className="space-y-8 p-4 sm:p-6 xl:p-8">
+      <div className="flex flex-col gap-4 2xl:flex-row 2xl:items-center 2xl:justify-between">
+        <div className="min-w-0">
           <div className="flex items-center gap-3">
             <h1 className="text-3xl font-bold tracking-tight">Security Overview</h1>
             <span className={cn(
@@ -297,21 +297,21 @@ export default function Dashboard({ setActiveTab }: DashboardProps) {
           </div>
           <p className="text-muted-foreground mt-1">Real-time threat intelligence and monitoring</p>
         </div>
-        <div className="flex gap-4">
-          <form onSubmit={handleScan} className="flex gap-2">
-            <div className="relative">
+        <div className="w-full 2xl:w-auto">
+          <form onSubmit={handleScan} className="flex w-full flex-col gap-2 sm:flex-row 2xl:w-auto">
+            <div className="relative min-w-0 flex-1 2xl:flex-none">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <input
                 type="url"
                 placeholder="Scan URL or Domain..."
                 value={scanUrl}
                 onChange={(e) => setScanUrl(e.target.value)}
-                className="pl-10 pr-4 py-2 bg-card border border-border rounded-xl w-64 focus:ring-2 focus:ring-primary outline-none transition-all"
+                className="w-full min-w-0 rounded-xl border border-border bg-card py-2 pl-10 pr-4 outline-none transition-all focus:ring-2 focus:ring-primary sm:w-72 2xl:w-64"
               />
             </div>
             <button
               disabled={scanning}
-              className="px-6 py-2 bg-primary text-primary-foreground rounded-xl font-medium hover:opacity-90 transition-all flex items-center gap-2"
+              className="flex items-center justify-center gap-2 rounded-xl bg-primary px-6 py-2 font-medium text-primary-foreground transition-all hover:opacity-90 sm:self-start"
             >
               {scanning ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Quick Scan'}
             </button>
@@ -319,14 +319,14 @@ export default function Dashboard({ setActiveTab }: DashboardProps) {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-4">
         {stats.map((stat, i) => (
           <motion.div
             key={stat.label}
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: i * 0.1 }}
-            className="p-6 bg-card border border-border rounded-2xl shadow-sm hover:shadow-md transition-all group"
+            className="group rounded-2xl border border-border bg-card p-6 shadow-sm transition-all hover:shadow-md min-w-0"
           >
             <div className="flex justify-between items-start">
               <div className={cn("p-3 rounded-xl", stat.bg)}>
@@ -352,10 +352,10 @@ export default function Dashboard({ setActiveTab }: DashboardProps) {
         ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 p-6 bg-card border border-border rounded-2xl shadow-sm">
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+        <div className="min-w-0 rounded-2xl border border-border bg-card p-6 shadow-sm xl:col-span-2">
           <h3 className="text-lg font-semibold mb-6">Threat Activity</h3>
-          <div className="h-[300px]">
+          <div className="h-[260px] sm:h-[300px] min-w-0">
             <Line 
               data={lineData} 
               options={{ 
@@ -367,9 +367,9 @@ export default function Dashboard({ setActiveTab }: DashboardProps) {
             />
           </div>
         </div>
-        <div className="p-6 bg-card border border-border rounded-2xl shadow-sm">
+        <div className="min-w-0 rounded-2xl border border-border bg-card p-6 shadow-sm">
           <h3 className="text-lg font-semibold mb-6">Severity Distribution</h3>
-          <div className="h-[300px] flex items-center justify-center">
+          <div className="flex h-[260px] min-w-0 items-center justify-center sm:h-[300px]">
             <Doughnut 
               data={doughnutData}
               options={{
@@ -383,7 +383,7 @@ export default function Dashboard({ setActiveTab }: DashboardProps) {
         </div>
       </div>
 
-      <div className="p-6 bg-card border border-border rounded-2xl shadow-sm">
+      <div className="rounded-2xl border border-border bg-card p-6 shadow-sm min-w-0">
         <div className="flex justify-between items-center mb-6">
           <h3 className="text-lg font-semibold">Recent Detections</h3>
           <button 
@@ -394,7 +394,7 @@ export default function Dashboard({ setActiveTab }: DashboardProps) {
           </button>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full">
+          <table className="w-full min-w-[760px]">
             <thead>
               <tr className="text-left text-sm text-muted-foreground border-b border-border">
                 <th className="pb-4 font-medium">Platform/URL</th>
@@ -408,7 +408,7 @@ export default function Dashboard({ setActiveTab }: DashboardProps) {
             <tbody className="divide-y divide-border">
               {threats.slice(0, 5).map((threat) => (
                 <tr key={threat.id} className="text-sm group hover:bg-muted/50 transition-colors">
-                  <td className="py-4 font-medium">{threat.platform}</td>
+                  <td className="py-4 font-medium break-all">{threat.platform}</td>
                   <td className="py-4">
                     <div className="flex items-center gap-2">
                       <div className="w-16 h-2 bg-muted rounded-full overflow-hidden">

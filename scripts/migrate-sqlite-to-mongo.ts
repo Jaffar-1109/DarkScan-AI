@@ -11,7 +11,12 @@ const projectRoot = path.resolve(__dirname, '..');
 const SOURCE_DB_PATH = process.env.SOURCE_DB_PATH
   ? resolvePath(process.env.SOURCE_DB_PATH)
   : path.join(projectRoot, 'darkscan.predeploy.backup.db');
-const MONGODB_URI = process.env.MONGODB_URI || '';
+const MONGODB_URI =
+  process.env.MONGODB_URI ||
+  process.env.MONGO_URL ||
+  process.env.MONGODB_URL ||
+  process.env.DATABASE_URL ||
+  '';
 const MONGODB_DB_NAME = process.env.MONGODB_DB_NAME || 'darkscan_ai';
 
 const TABLES = [
@@ -28,7 +33,7 @@ function resolvePath(value: string) {
 
 async function main() {
   if (!MONGODB_URI) {
-    throw new Error('Missing MONGODB_URI. Set it in your environment before running the migration.');
+    throw new Error('Missing MongoDB connection string. Set MONGODB_URI, MONGO_URL, MONGODB_URL, or DATABASE_URL before running the migration.');
   }
 
   const sqlite = new Database(SOURCE_DB_PATH, { readonly: true });

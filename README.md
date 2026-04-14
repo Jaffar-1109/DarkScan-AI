@@ -28,26 +28,27 @@ This README is intentionally long and detailed. It is meant to serve as a comple
 20. Local Network And Mobile Access
 21. Browser Guard Extension
 22. Deployment On Render
-23. Updating The App On GitHub
-24. Environment Variables
-25. API Overview
-26. Data Flow Walkthrough
-27. How Scanning Works
-28. How Monitoring Works
-29. How Model Training Works
-30. Limitations
-31. Security Notes
-32. Performance Notes
-33. Troubleshooting
-34. Maintenance Guide
-35. Extending The Dataset
-36. Extending The Model
-37. Improving Accuracy
-38. Testing Ideas
-39. Production Readiness Notes
-40. Suggested Roadmap
-41. FAQ
-42. Closing Notes
+23. Deployment On Railway
+24. Updating The App On GitHub
+25. Environment Variables
+26. API Overview
+27. Data Flow Walkthrough
+28. How Scanning Works
+29. How Monitoring Works
+30. How Model Training Works
+31. Limitations
+32. Security Notes
+33. Performance Notes
+34. Troubleshooting
+35. Maintenance Guide
+36. Extending The Dataset
+37. Extending The Model
+38. Improving Accuracy
+39. Testing Ideas
+40. Production Readiness Notes
+41. Suggested Roadmap
+42. FAQ
+43. Closing Notes
 
 ## Project Overview
 
@@ -530,6 +531,65 @@ After deployment, verify the following:
 
 After the app is working on the default Render URL, you can add your own custom domain in the Render dashboard. Once the custom domain is active, update `APP_URL` in Render so the deployment settings stay aligned with the public URL.
 
+## Deployment On Railway
+
+Railway is also a good fit for this app because it supports long-running Node services and managed MongoDB. If you want to use Railway for the database layer, the current code now supports Railway-style variable names directly.
+
+Railway is also a good fit when you do not want MongoDB at all. In that setup, you should attach a Railway volume to the web service and store the SQLite database on that mounted volume. This is the simplest hosted setup for the current application because it preserves the existing SQLite-first design.
+
+The app accepts any of these Mongo connection variable names:
+
+- `MONGODB_URI`
+- `MONGO_URL`
+- `MONGODB_URL`
+- `DATABASE_URL`
+
+For Railway, the most common setup is:
+
+- deploy the web app as a Railway service
+- add a MongoDB service in the same Railway project
+- reference the Mongo connection string into the web service variables
+- keep `DB_PATH=/tmp/darkscan.db` so SQLite remains a runtime cache
+
+Recommended Railway web-service variables:
+
+- `NODE_ENV=production`
+- `DB_PATH=/app/data/darkscan.db` if your Railway volume is mounted at `/app/data`
+- or leave `DB_PATH` unset and set `RAILWAY_VOLUME_MOUNT_PATH=/app/data`
+- `MONGODB_DB_NAME=darkscan_ai`
+- `MONGO_URL=${{MongoDB.MONGO_URL}}` or set `MONGODB_URI` to the same value
+- `APP_URL=https://your-service.railway.app`
+
+If `APP_URL` is not manually set, the backend can now fall back to Railway's public domain value when `RAILWAY_PUBLIC_DOMAIN` is available.
+
+### Railway without MongoDB
+
+If you want the app to be completely SQLite-based on Railway:
+
+1. create a Railway web service for the app
+2. attach a Railway volume to that same service
+3. choose a mount path such as `/app/data`
+4. set either:
+   - `DB_PATH=/app/data/darkscan.db`
+   - or `RAILWAY_VOLUME_MOUNT_PATH=/app/data`
+5. do not set `MONGODB_URI`, `MONGO_URL`, `MONGODB_URL`, or `DATABASE_URL`
+
+In this mode:
+
+- the app stays fully dependent on Railway hosting
+- SQLite remains the only database
+- data survives redeploys because the database lives on the Railway volume
+- scheduled monitoring still works because the app remains a long-running service
+
+If you already have useful local data in `darkscan.db`, you will need to move that SQLite file into the Railway volume once, or start fresh on Railway and let the hosted app build a new database there.
+
+Recommended Railway service commands:
+
+- build command: `npm install && npm run build`
+- start command: `npm run start`
+
+If you need to migrate your old local data before switching to Railway, you can still use the migration script the same way. Just point it at the Railway Mongo connection string.
+
 ## Updating The App On GitHub
 
 If you are using GitHub as the source for this project, the normal update flow is:
@@ -637,6 +697,8 @@ The project supports these important environment variables:
 
 - `PORT`
 - `APP_URL`
+- `RAILWAY_PUBLIC_DOMAIN`
+- `RAILWAY_VOLUME_MOUNT_PATH`
 - `JWT_SECRET`
 - `ADMIN_USERNAME`
 - `ADMIN_EMAIL`
@@ -644,6 +706,7 @@ The project supports these important environment variables:
 - `ADMIN_ALERT_WEBHOOK_URL`
 - `DB_PATH`
 - `MONGODB_URI`
+- `MONGO_URL`
 - `MONGODB_DB_NAME`
 - `NODE_ENV`
 - `SMTP_HOST`
@@ -652,7 +715,7 @@ The project supports these important environment variables:
 - `SMTP_PASS`
 - `SMTP_FROM`
 
-`PORT` is used by the backend listener. `APP_URL` is used for environment-aware links and deployment configuration. `JWT_SECRET` secures issued tokens. `ADMIN_USERNAME`, `ADMIN_EMAIL`, and `ADMIN_PASSWORD` define the seeded admin account. `ADMIN_ALERT_WEBHOOK_URL` is an optional Discord-compatible or generic webhook for the admin account. `DB_PATH` controls where the runtime SQLite file is stored. `MONGODB_URI` and `MONGODB_DB_NAME` control the durable hosted persistence layer. `NODE_ENV` switches behavior between development and production serving. The `SMTP_*` values enable real email delivery for monitoring alerts and reports.
+`PORT` is used by the backend listener. `APP_URL` is used for environment-aware links and deployment configuration. `RAILWAY_PUBLIC_DOMAIN` can now act as an automatic public URL fallback on Railway. `RAILWAY_VOLUME_MOUNT_PATH` can now act as an automatic SQLite storage root on Railway when you want to remain SQLite-only. `JWT_SECRET` secures issued tokens. `ADMIN_USERNAME`, `ADMIN_EMAIL`, and `ADMIN_PASSWORD` define the seeded admin account. `ADMIN_ALERT_WEBHOOK_URL` is an optional Discord-compatible or generic webhook for the admin account. `DB_PATH` controls where the runtime SQLite file is stored. `MONGODB_URI`, `MONGO_URL`, and `MONGODB_DB_NAME` control the optional hosted persistence layer when MongoDB is used. `NODE_ENV` switches behavior between development and production serving. The `SMTP_*` values enable real email delivery for monitoring alerts and reports.
 
 The `.env.example` file contains the local template. On Render, values can be managed through the service environment configuration.
 
